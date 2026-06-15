@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   Lab,
+  type DevnetView,
   type EndpointView,
   type LabState,
   type LogLine,
   type MetricsView,
+  type Network,
   type PipelineStep,
   type Scenario,
+  type ScenarioInfo,
+  type Tally,
 } from "./lab";
 
 const SCENARIOS: { id: Scenario; label: string }[] = [
@@ -26,6 +30,7 @@ export function App() {
   if (labRef.current === null) labRef.current = new Lab(() => force());
   const lab = labRef.current;
   const state = lab.getState();
+  const devnet = state.network === "devnet";
 
   const [theme, setTheme] = useState<Theme>(
     () => (document.documentElement.getAttribute("data-theme") as Theme) ?? "dark",
@@ -43,7 +48,8 @@ export function App() {
           <span className="tag">solana-resilience-kit · live</span>
         </div>
         <div className="topbar-right">
-          <Clock slot={state.slot} />
+          <NetworkSwitch network={state.network} disabled={state.running} onChange={(n) => lab.setNetwork(n)} />
+          {!devnet && <Clock slot={state.slot} />}
           <button className="theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? "◐ light" : "◑ dark"}
           </button>
@@ -51,35 +57,40 @@ export function App() {
       </header>
 
       <p className="intro">
-        The real SDK runs in your browser against a deterministic Solana simulator — no backend, no
-        network. Inject faults into the mock endpoints, then <code>Send transaction</code> to watch{" "}
-        <code>ResilientRpcPool</code>, <code>TransactionSender</code>, and <code>JitoRouter</code>{" "}
-        route, fail over, rebroadcast, and confirm. Telemetry below is read straight from{" "}
-        <code>InMemoryMetrics</code>.
+        The real SDK runs in your browser. In <code>simulation</code> it drives a deterministic Solana
+        harness — inject faults, then flip <code>SDK</code> off to see how a naive client fares. In{" "}
+        <code>devnet</code> it builds, signs, and lands a real transaction you can open in the explorer.
       </p>
 
       <ControlDeck lab={lab} state={state} />
+      {devnet ? (
+        <DevnetPanel lab={lab} dv={state.devnet} />
+      ) : (
+        <ScenarioExplainer info={state.info} sdkEnabled={state.sdkEnabled} />
+      )}
 
       <div className="grid">
         <div className="col">
-          <section className="card">
-            <header>
-              <h2>Endpoints</h2>
-              <span className="meta">block {state.blockHeight.toLocaleString()}</span>
-            </header>
-            <div className="card-body">
-              <div className="endpoints">
-                {state.endpoints.map((ep) => (
-                  <EndpointCard key={ep.name} ep={ep} />
-                ))}
+          {!devnet && (
+            <section className="card">
+              <header>
+                <h2>Endpoints</h2>
+                <span className="meta">block {state.blockHeight.toLocaleString()}</span>
+              </header>
+              <div className="card-body">
+                <div className="endpoints">
+                  {state.endpoints.map((ep) => (
+                    <EndpointCard key={ep.name} ep={ep} />
+                  ))}
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+          )}
 
           <section className="card">
             <header>
               <h2>Pipeline</h2>
-              <span className="meta">{state.running ? "running…" : "idle"}</span>
+              <span className="meta">{state.running ? "running…" : state.sdkEnabled ? "resilient" : "naive baseline"}</span>
             </header>
             <div className="card-body">
               <Pipeline steps={state.steps} />
@@ -90,11 +101,11 @@ export function App() {
         <div className="col">
           <section className="card">
             <header>
-              <h2>Metrics</h2>
+              <h2>Scoreboard &amp; telemetry</h2>
               <span className="meta">cumulative</span>
             </header>
             <div className="card-body">
-              <MetricsPanel m={state.metrics} />
+              <MetricsPanel m={state.metrics} comparison={state.comparison} />
             </div>
           </section>
 
@@ -109,11 +120,24 @@ export function App() {
       </div>
 
       <footer className="footer">
-        <span>real SDK · real harness · deterministic fault injection</span>
+        <span>real SDK · {devnet ? "real devnet" : "simulation harness"} · vendor-neutral resilience</span>
         <a href="https://github.com/mihailShumilov/solana-rpc-sdk" target="_blank" rel="noreferrer">
           github.com/mihailShumilov/solana-rpc-sdk
         </a>
       </footer>
+    </div>
+  );
+}
+
+function NetworkSwitch({ network, disabled, onChange }: { network: Network; disabled: boolean; onChange: (n: Network) => void }) {
+  return (
+    <div className="net-seg">
+      <button data-active={network === "sim"} disabled={disabled} onClick={() => onChange("sim")}>
+        simulation
+      </button>
+      <button data-active={network === "devnet"} disabled={disabled} onClick={() => onChange("devnet")}>
+        devnet
+      </button>
     </div>
   );
 }
@@ -134,17 +158,18 @@ function Clock({ slot }: { slot: number }) {
 
 function ControlDeck({ lab, state }: { lab: Lab; state: LabState }) {
   const busy = state.running;
+  const devnet = state.network === "devnet";
   return (
-    <div className="deck">
+    <div className="deck" data-sdk={state.sdkEnabled}>
       <div className="field">
-        <label>Fault scenario</label>
+        <label>{devnet ? "Fault scenario (simulation only)" : "Fault scenario"}</label>
         <div className="scenarios">
           {SCENARIOS.map((s) => (
             <button
               key={s.id}
               className="chip mono"
-              data-active={state.scenario === s.id}
-              disabled={busy}
+              data-active={!devnet && state.scenario === s.id}
+              disabled={busy || devnet}
               onClick={() => void lab.applyScenario(s.id)}
             >
               {s.label}
@@ -154,14 +179,17 @@ function ControlDeck({ lab, state }: { lab: Lab; state: LabState }) {
       </div>
 
       <div className="field">
+        <label>Library</label>
+        <label className="toggle sdk-toggle" data-on={state.sdkEnabled}>
+          <input type="checkbox" checked={state.sdkEnabled} disabled={busy} onChange={(e) => lab.setSdkEnabled(e.target.checked)} />
+          {state.sdkEnabled ? "SDK on" : "SDK off"}
+        </label>
+      </div>
+
+      <div className="field">
         <label>Route</label>
         <label className="toggle">
-          <input
-            type="checkbox"
-            checked={state.viaJito}
-            disabled={busy}
-            onChange={(e) => lab.setViaJito(e.target.checked)}
-          />
+          <input type="checkbox" checked={state.viaJito} disabled={busy || devnet} onChange={(e) => lab.setViaJito(e.target.checked)} />
           via Jito
         </label>
       </div>
@@ -169,15 +197,8 @@ function ControlDeck({ lab, state }: { lab: Lab; state: LabState }) {
       <div className="field">
         <label>Tick speed</label>
         <div className="speed">
-          <input
-            type="range"
-            min={60}
-            max={600}
-            step={20}
-            defaultValue={220}
-            onChange={(e) => lab.setSpeed(Number(e.target.value))}
-          />
-          <span className="val">{lab.speedMs}ms/slot</span>
+          <input type="range" min={60} max={600} step={20} defaultValue={220} onChange={(e) => lab.setSpeed(Number(e.target.value))} />
+          <span className="val">{lab.speedMs}ms/{devnet ? "poll" : "slot"}</span>
         </div>
       </div>
 
@@ -186,10 +207,112 @@ function ControlDeck({ lab, state }: { lab: Lab; state: LabState }) {
           reset
         </button>
         <button className="btn-send" disabled={busy} onClick={() => void lab.send()}>
-          {busy ? "Sending…" : "Send transaction"}
+          {busy ? "Sending…" : devnet ? "Send devnet tx" : state.sdkEnabled ? "Send transaction" : "Send (no SDK)"}
         </button>
       </div>
     </div>
+  );
+}
+
+function ScenarioExplainer({ info, sdkEnabled }: { info: ScenarioInfo; sdkEnabled: boolean }) {
+  return (
+    <section className="card explain">
+      <header>
+        <h2>Scenario · {info.id}</h2>
+        <span className="meta">{sdkEnabled ? "SDK engaged" : "SDK bypassed"}</span>
+      </header>
+      <div className="card-body explain-body">
+        <div className="ex-fault">
+          <span className="ex-k">Injected fault</span>
+          <p>{info.fault}</p>
+        </div>
+        <div className="ex-cols">
+          <div className="ex-col" data-live={!sdkEnabled}>
+            <span className="ex-k">Without the kit</span>
+            <p>{info.without}</p>
+          </div>
+          <div className="ex-col" data-live={sdkEnabled}>
+            <span className="ex-k">With solana-resilience-kit</span>
+            <p>{info.withKit}</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DevnetPanel({ lab, dv }: { lab: Lab; dv: DevnetView }) {
+  const [text, setText] = useState("");
+  return (
+    <section className="card devnet-panel">
+      <header>
+        <h2>Devnet · real transactions</h2>
+        <span className="meta">{dv.hasKey ? "key loaded" : "no key"}</span>
+      </header>
+      <div className="card-body devnet-grid">
+        <p className="warn-note">
+          ⚠ Devnet only — never paste a mainnet secret key. It is kept in this browser's localStorage and used to
+          sign a 0.0001 SOL self-transfer. Paste a 64-byte secret-key array (e.g. the repo's <code>.devnet-keypair.json</code>)
+          or generate one and fund it.
+        </p>
+        <div className="kp-row">
+          <input
+            className="kp-input"
+            placeholder="[12, 34, … 64 bytes …]"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button
+            className="btn-ghost mono"
+            onClick={() => {
+              void lab.setSecretKey(text);
+              setText("");
+            }}
+          >
+            load key
+          </button>
+          <button className="btn-ghost mono" onClick={() => void lab.generateKeypair()}>
+            generate
+          </button>
+          {dv.hasKey && (
+            <button className="btn-ghost mono" onClick={() => lab.clearKey()}>
+              clear
+            </button>
+          )}
+        </div>
+
+        {dv.keyError && <p className="warn-note" style={{ color: "var(--coral)" }}>{dv.keyError}</p>}
+
+        {dv.address && (
+          <div className="kp-meta">
+            <span>
+              address <b>{dv.address}</b>
+            </span>
+            <span>
+              balance <b>{dv.loadingBalance ? "…" : dv.balanceSol === null ? "—" : `${dv.balanceSol.toFixed(4)} SOL`}</b>
+            </span>
+            <a href={`https://explorer.solana.com/address/${dv.address}?cluster=devnet`} target="_blank" rel="noreferrer">
+              address ↗
+            </a>
+            <a href="https://faucet.solana.com/" target="_blank" rel="noreferrer">
+              faucet ↗
+            </a>
+            <a onClick={() => void lab.refreshBalance()} style={{ cursor: "pointer" }}>
+              refresh
+            </a>
+          </div>
+        )}
+
+        {dv.explorerUrl && (
+          <div className="explorer-link">
+            last tx →{" "}
+            <a href={dv.explorerUrl} target="_blank" rel="noreferrer">
+              {dv.lastSignature}
+            </a>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -221,9 +344,7 @@ function EndpointCard({ ep }: { ep: EndpointView }) {
       </div>
       <div className="ep-faults">
         {ep.faults.length === 0 ? (
-          <span className="fault" style={{ color: "var(--faint)", background: "transparent" }}>
-            no faults
-          </span>
+          <span className="fault none">no faults</span>
         ) : (
           ep.faults.map((f) => (
             <span key={f} className="fault">
@@ -250,21 +371,37 @@ function Pipeline({ steps }: { steps: PipelineStep[] }) {
   );
 }
 
-function MetricsPanel({ m }: { m: MetricsView }) {
-  const pct = Math.round(m.landingRate * 100);
+function Scoreboard({ comparison }: { comparison: { sdk: Tally; naive: Tally } }) {
+  const Row = ({ label, t, color }: { label: string; t: Tally; color: string }) => {
+    const pct = Math.round(t.rate * 100);
+    return (
+      <div className="score-row">
+        <div className="score-head">
+          <span className="score-label" style={{ color }}>
+            {label}
+          </span>
+          <span className="score-val">{t.total === 0 ? "— no runs" : `${t.confirmed}/${t.total} landed · ${pct}%`}</span>
+        </div>
+        <div className="bar">
+          <i style={{ width: `${pct}%`, background: color }} />
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="scoreboard">
+      <Row label="with kit" t={comparison.sdk} color="var(--accent)" />
+      <Row label="without kit" t={comparison.naive} color="var(--coral)" />
+    </div>
+  );
+}
+
+function MetricsPanel({ m, comparison }: { m: MetricsView; comparison: { sdk: Tally; naive: Tally } }) {
   return (
     <>
-      <div className="tiles">
-        <div className="tile wide">
-          <div className="k">landing rate</div>
-          <div className="v accent">
-            {pct}
-            <small>% · {m.confirmed}/{m.landings || 0} confirmed</small>
-          </div>
-          <div className="bar">
-            <i style={{ width: `${pct}%`, background: pct >= 80 ? "var(--accent)" : pct >= 50 ? "var(--amber)" : "var(--coral)" }} />
-          </div>
-        </div>
+      <div className="sb-label">landing rate — run the same setup with SDK on, then off</div>
+      <Scoreboard comparison={comparison} />
+      <div className="tiles" style={{ marginTop: 14 }}>
         <div className="tile">
           <div className="k">failovers</div>
           <div className="v">{m.failovers}</div>
@@ -284,6 +421,7 @@ function MetricsPanel({ m }: { m: MetricsView }) {
           <div className="v">{m.requests}</div>
         </div>
       </div>
+      <p className="sb-note">Telemetry tiles read from the SDK's InMemoryMetrics and count SDK-on sends only.</p>
     </>
   );
 }
@@ -295,7 +433,6 @@ function EventLog({ log }: { log: LogLine[] }) {
     const el = ref.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
   });
-  const lines = useMemo(() => log, [log]);
   return (
     <div
       className="log"
@@ -305,7 +442,7 @@ function EventLog({ log }: { log: LogLine[] }) {
         atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
       }}
     >
-      {lines.map((l) => (
+      {log.map((l) => (
         <div key={l.id} className="log-line" data-kind={l.kind}>
           <span className="lt">{l.t}</span>
           <span className="lm">{l.msg}</span>

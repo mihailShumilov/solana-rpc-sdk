@@ -32,23 +32,52 @@ npm run preview    # serves the built bundle
 > the SDK and harness sources from the repository root. Vite resolves the SDK's
 > `.js` ESM imports to their `.ts` sources automatically.
 
-## What you can do
+## Two networks
+
+- **Simulation** (default) — the SDK runs against the in-memory fault-injection
+  harness. Deterministic, offline, instantly reproducible.
+- **Devnet** — the SDK builds, signs, sends, and confirms a *real* transaction
+  on Solana devnet, and links it in the explorer (see below).
+
+## What you can do (simulation)
 
 - **Fault scenarios** — `healthy`, `drop`, `429`, `lag`, `jito-fail`,
   `congestion`. Each mutates the `EndpointFaultProfile` of the mock endpoints
-  (and, for `jito-fail`, the Block Engine), so the SDK reacts to genuine
-  conditions:
+  (and, for `jito-fail`, the Block Engine), and a panel explains the injected
+  fault, what a naive client does, and what the kit does:
   - `drop` — silent drops on every node → the sender rebroadcasts then reports
     `expired` (the classic "looks healthy, tx vanishes" failure).
   - `429` — one node rate-limits → the pool fails over to a healthy node.
   - `lag` — one node is >150 slots behind → `HealthMonitor` deprioritizes it.
   - `jito-fail` — the bundle never lands → `JitoRouter` falls back to RPC.
   - `congestion` — latency + partial drops/429s across nodes.
-- **Route via Jito** — toggle to push sends through `JitoRouter` (with automatic
-  RPC fallback) instead of the plain sender.
+- **SDK on/off** — flip the `Library` toggle to bypass the kit and run a naive
+  baseline (one endpoint, a single broadcast, no failover / rebroadcast / Jito
+  fallback). The scoreboard tracks landing rate **with kit vs without kit** so
+  the difference is measurable — run a scenario both ways and compare.
+- **Route via Jito** — push sends through `JitoRouter` (with automatic RPC
+  fallback) instead of the plain sender.
 - **Send transaction** — runs an actual `sendAndConfirm` / `sendWithFallback`
   pipeline. The injected `sleep` advances the mock cluster one slot per tick and
   paces the animation (adjust with the speed slider).
+
+## Devnet mode (real transactions)
+
+Switch the network to **devnet** to land a real transaction:
+
+1. Provide a funded devnet keypair — paste a 64-byte secret-key JSON array (e.g.
+   the repo's `.devnet-keypair.json` from `examples/devnet-demo.ts`), or click
+   **generate** to mint one in-browser (then fund the shown address via the
+   linked faucet). The key is kept only in this browser's `localStorage`.
+2. **Send devnet tx** signs a 0.0001 SOL self-transfer and lands it through the
+   real `TransactionSender` against `api.devnet.solana.com`.
+3. The event log prints the confirmed signature and an **explorer link**; the
+   `Library` toggle still works, so you can compare the resilient sender against
+   a naive single broadcast on the real network.
+
+> ⚠️ **Devnet only** — never paste a mainnet secret key into a web page.
+> Requires a modern browser (the kit signs via WebCrypto Ed25519) and the public
+> devnet RPC's permissive CORS.
 
 ## How the live telemetry works
 
