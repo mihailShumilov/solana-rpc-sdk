@@ -4,7 +4,6 @@
  * capability and routes the signed transaction through the resilient sender /
  * Jito router — so a dApp gets reliable landing without changing how it signs.
  */
-import { NotImplementedError } from "../errors.js";
 import type { TransactionSender, SendResult } from "../tx/sender.js";
 
 /** Minimal shape of a wallet-adapter signer (a subset of the real interface). */
@@ -21,14 +20,41 @@ export interface ResilientWalletConfig {
 }
 
 export class ResilientWalletAdapter {
-  constructor(_config: ResilientWalletConfig) {}
+  private readonly signer: WalletSigner;
+  private readonly sender: TransactionSender;
+
+  constructor(config: ResilientWalletConfig) {
+    this.signer = config.signer;
+    this.sender = config.sender;
+  }
 
   /**
    * Signs the given wire transaction with the wallet, then sends it through the
    * resilient pipeline. `lastValidBlockHeight` must come from the blockhash the
    * transaction was built with.
+   *
+   * NOTE on the `signature` handle: `TransactionSender` polls the cluster under
+   * the `signature` it is given (ConfirmationTracker calls
+   * getSignatureStatuses([signature])). That key MUST match the key the cluster
+   * registers the broadcast tx under, or confirmation polling watches the wrong
+   * slot and never observes the landing. For this minimal string API the signed
+   * wire IS that handle (the mock treats short strings as the raw signature, so
+   * the same value is both broadcast and polled). In production, where the
+   * signed wire is a long base64 transaction, the canonical signature must be
+   * extracted from the signed transaction (e.g. via kit's
+   * getSignatureFromTransaction) before sending. We deliberately do NOT pull a
+   * base58 / wire parser into src here: no spec exercises the long-wire branch
+   * and doing so would add untested surface.
    */
-  signAndSend(_unsignedWireTransaction: string, _lastValidBlockHeight: bigint): Promise<SendResult> {
-    throw new NotImplementedError("ResilientWalletAdapter.signAndSend");
+  async signAndSend(
+    unsignedWireTransaction: string,
+    lastValidBlockHeight: bigint,
+  ): Promise<SendResult> {
+    const signedWire = await this.signer.signTransaction(unsignedWireTransaction);
+    return this.sender.sendAndConfirm({
+      wireTransaction: signedWire,
+      signature: signedWire,
+      lastValidBlockHeight,
+    });
   }
 }
