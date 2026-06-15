@@ -10,7 +10,9 @@
     "preview": "vite preview --port 4173"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
     "@solana-program/system": "^0.12.2",
+    "@solana/kit": "^6.9.0",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/wallet-adapter-react-ui": "^0.9.39",
