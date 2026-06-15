@@ -10,10 +10,9 @@
  * Input is an already-signed wire transaction plus its signature and
  * lastValidBlockHeight, so signing (and wallet integration) stays decoupled.
  */
-import type { Rpc, SolanaRpcApi } from "@solana/kit";
-import { NotImplementedError } from "../errors.js";
+import type { Base64EncodedWireTransaction, Rpc, SolanaRpcApi } from "@solana/kit";
 import type { Metrics } from "../observability/metrics.js";
-import type { TerminalOutcome } from "./confirmation.js";
+import { ConfirmationTracker, type TerminalOutcome } from "./confirmation.js";
 
 export interface SendConfig {
   /** Base64 wire transaction (from getBase64EncodedWireTransaction). */
@@ -41,13 +40,70 @@ export interface SenderDeps {
 }
 
 export class TransactionSender {
-  constructor(
-    _rpc: Rpc<SolanaRpcApi>,
-    _deps?: SenderDeps,
-  ) {}
+  private readonly rpc: Rpc<SolanaRpcApi>;
+  private readonly metrics: Metrics | undefined;
+  private readonly sleep: (ms: number) => Promise<void>;
 
-  /** Sends and rebroadcasts until confirmed or blockhash expiry. */
-  sendAndConfirm(_config: SendConfig): Promise<SendResult> {
-    throw new NotImplementedError("TransactionSender.sendAndConfirm");
+  constructor(rpc: Rpc<SolanaRpcApi>, deps?: SenderDeps) {
+    this.rpc = rpc;
+    this.metrics = deps?.metrics;
+    this.sleep = deps?.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  /**
+   * Sends and rebroadcasts until confirmed or blockhash expiry.
+   *
+   * Correctness invariants (see CLAUDE.md):
+   *  - Every send uses `maxRetries: 0n` so the RPC's generic retry is disabled
+   *    and we own the rebroadcast loop. (kit downcasts the bigint to `0` in the
+   *    JSON-RPC payload.)
+   *  - Rebroadcast = resend the SAME signed bytes. We never decode, mutate, or
+   *    re-sign the transaction, and we return `config.signature` verbatim — so
+   *    there is no double-charge risk.
+   *  - Termination is delegated to ConfirmationTracker's `lastValidBlockHeight`
+   *    bound; we add no arbitrary cap.
+   */
+  async sendAndConfirm(config: SendConfig): Promise<SendResult> {
+    const broadcast = (): Promise<string> =>
+      this.rpc
+        .sendTransaction(config.wireTransaction as Base64EncodedWireTransaction, {
+          maxRetries: 0n,
+          encoding: "base64",
+          preflightCommitment: config.commitment ?? "confirmed",
+        })
+        .send();
+
+    // Initial broadcast: the first send, with maxRetries disabled.
+    await broadcast();
+
+    let rebroadcasts = 0;
+
+    // A fresh tracker per call. Its sleep hook is where we rebroadcast: the
+    // tracker checks status BEFORE sleeping, so an unlanded tx triggers at least
+    // one resend of the identical signed bytes before the next status check.
+    const tracker = new ConfirmationTracker(this.rpc, {
+      sleep: async (ms) => {
+        await broadcast(); // resend SAME wireTransaction, maxRetries 0n — never re-sign
+        rebroadcasts++;
+        this.metrics?.recordRebroadcast(config.signature);
+        await this.sleep(ms); // injected sleep advances the (mock) clock
+      },
+    });
+
+    const res = await tracker.track({
+      signature: config.signature,
+      lastValidBlockHeight: config.lastValidBlockHeight,
+      commitment: config.commitment,
+      pollIntervalMs: config.rebroadcastIntervalMs,
+    });
+
+    this.metrics?.recordLanding(config.signature, res.outcome, res.polls);
+
+    return {
+      signature: config.signature,
+      outcome: res.outcome,
+      slot: res.slot,
+      rebroadcasts,
+    };
   }
 }
