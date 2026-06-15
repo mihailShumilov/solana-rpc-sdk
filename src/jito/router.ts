@@ -4,7 +4,6 @@
  * if the bundle does not land before the deadline. A bundle_id is only a receipt,
  * not a landing guarantee, so fallback is mandatory for reliable confirmation.
  */
-import { NotImplementedError } from "../errors.js";
 import type { TransactionSender, SendConfig, SendResult } from "../tx/sender.js";
 import type { TipEstimator, TipPercentile } from "./tips.js";
 
@@ -32,15 +31,57 @@ export interface JitoRouterDeps {
 }
 
 export class JitoRouter {
-  constructor(
-    _engine: JitoEngineClient,
-    _tipEstimator: TipEstimator,
-    _fallbackSender: TransactionSender,
-    _deps?: JitoRouterDeps,
-  ) {}
+  private readonly sleep: (ms: number) => Promise<void>;
 
-  /** Submit via Jito; fall back to RPC sender if the bundle doesn't land. */
-  sendWithFallback(_config: JitoRouteConfig): Promise<JitoRouteResult> {
-    throw new NotImplementedError("JitoRouter.sendWithFallback");
+  constructor(
+    private readonly engine: JitoEngineClient,
+    private readonly tipEstimator: TipEstimator,
+    private readonly fallbackSender: TransactionSender,
+    deps?: JitoRouterDeps,
+  ) {
+    this.sleep = deps?.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  /**
+   * Submit via Jito; fall back to RPC sender if the bundle doesn't land.
+   *
+   * Correctness invariants (see CLAUDE.md):
+   *  - A `bundle_id` is a receipt, NOT a landing guarantee. We poll in-flight
+   *    status a bounded number of times (`maxBundlePolls`) and, on anything
+   *    other than a confirmed "Landed", hand the SAME already-signed wire
+   *    transaction to the RPC `TransactionSender`. The fallback inherits the
+   *    sender's invariants (maxRetries:0, no re-sign, LVBH-bounded loop), so
+   *    there is no double-charge and the path is idempotent by signature.
+   *  - On the Jito-landed path we do NOT poll the cluster for confirmation:
+   *    a "Landed" bundle IS the confirmation. The transaction may never have
+   *    been broadcast to the RPC, so a getSignatureStatuses poll would falsely
+   *    expire it. We return outcome "confirmed" with slot null directly.
+   */
+  async sendWithFallback(config: JitoRouteConfig): Promise<JitoRouteResult> {
+    const maxBundlePolls = config.maxBundlePolls ?? 10;
+    const bundleId = await this.engine.sendBundle([config.wireTransaction]);
+
+    for (let i = 0; i < maxBundlePolls; i++) {
+      const statuses = await this.engine.getInflightBundleStatuses([bundleId]);
+      const status = statuses[0]?.status;
+      if (status === "Landed") {
+        return {
+          signature: config.signature,
+          outcome: "confirmed",
+          slot: null,
+          rebroadcasts: 0,
+          route: "jito",
+          bundleId,
+        };
+      }
+      // Unrecoverable on Jito -> stop polling and fall back to RPC.
+      if (status === "Failed" || status === "Invalid") break;
+      await this.sleep(config.rebroadcastIntervalMs ?? 1000);
+    }
+
+    // Bundle never landed -> RPC fallback (the mandatory invariant). The
+    // sender owns the rebroadcast/confirm loop on the identical signed bytes.
+    const r = await this.fallbackSender.sendAndConfirm(config);
+    return { ...r, route: "rpc", bundleId };
   }
 }
