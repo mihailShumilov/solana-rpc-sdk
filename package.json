@@ -58,6 +58,7 @@
     "test:cov": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "docs:api": "typedoc",
+    "example:otel": "tsx examples/otel-setup.ts",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
@@ -65,6 +66,8 @@
     "@solana/kit": "^6.9.0"
   },
   "devDependencies": {
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
+    "@opentelemetry/sdk-metrics": "^2.8.0",
     "@solana-program/system": "^0.12.2",
     "@types/node": "^22.19.21",
     "@vitest/coverage-v8": "^4.1.9",

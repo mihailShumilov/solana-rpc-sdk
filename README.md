@@ -194,6 +194,63 @@ expired transaction) · `2` a usage error. Run with no command, `help`, or
 `--help` to print usage. The argv parser is a pure, network-free function and is
 unit-tested in isolation (`test/cli/argv.test.ts`).
 
+## Wiring observability to OpenTelemetry / Datadog
+
+The library depends on **only `@opentelemetry/api`** — `OtelMetrics` writes to the
+*global* OpenTelemetry meter, which is a **no-op until your app registers a real
+`MeterProvider`** with a reader + exporter. The OTel SDK and OTLP exporter are
+your application's dependencies, not the SDK's, so you choose the backend. The
+~10 lines that make exports real:
+
+```ts
+import { metrics } from "@opentelemetry/api";
+import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
+import { OtelMetrics, ResilientRpcPool } from "solana-resilience-kit";
+
+// 1. Register a working MeterProvider — without this, OtelMetrics is inert.
+metrics.setGlobalMeterProvider(
+  new MeterProvider({
+    readers: [
+      new PeriodicExportingMetricReader({
+        // Reads OTEL_EXPORTER_OTLP_ENDPOINT, e.g. an OTel Collector or the
+        // Datadog Agent's OTLP intake (http://localhost:4318).
+        exporter: new OTLPMetricExporter(),
+        exportIntervalMillis: 10_000,
+      }),
+    ],
+  }),
+);
+
+// 2. Hand OtelMetrics to the SDK — now every signal below is exported.
+const pool = new ResilientRpcPool({ endpoints, metrics: new OtelMetrics({ serviceName: "my-dapp" }) });
+```
+
+Install the exporter side in your app (devtime/runtime, not in this library):
+
+```bash
+npm install @opentelemetry/sdk-metrics @opentelemetry/exporter-metrics-otlp-http
+```
+
+**For Datadog**, point `OTEL_EXPORTER_OTLP_ENDPOINT` at the Datadog Agent's OTLP
+endpoint (enable OTLP ingestion in the Agent); no separate Collector needed.
+
+The SDK emits a small, fixed set of client-side instruments:
+
+| Instrument | Type | Attributes | Emitted when |
+|---|---|---|---|
+| `rpc.request.latency_ms` | histogram | `endpoint`, `method`, `ok` | every RPC request attempt (per endpoint) |
+| `rpc.request.failures` | counter | `endpoint`, `method` | a request attempt fails |
+| `rpc.rate_limited` | counter | `endpoint` | an attempt is rejected with HTTP 429 |
+| `tx.rebroadcasts` | counter | `signature` | the sender rebroadcasts the signed transaction |
+| `tx.landings` | counter | `signature`, `outcome`, `slots` | a transaction reaches a terminal outcome (`confirmed` / `expired`) |
+| `rpc.endpoint.slot` | gauge | `endpoint` | a `getSlot` response is observed (slot-lag dashboards) |
+
+A runnable end-to-end demo is in [`examples/otel-setup.ts`](./examples/otel-setup.ts):
+`npm run example:otel` wires `OtelMetrics` into a pool + sender, drives simulated
+sends against the harness, and exports all six instruments — with a console
+exporter attached so you see every data point even without a collector running.
+
 ## Testing your own code against the fault harness
 
 The deterministic Solana cluster simulator the SDK is tested with is shipped as a
