@@ -17,7 +17,7 @@ export function Docs() {
         simulation harness from <code>solana-resilience-kit/testing</code> — the code you read is exactly
         the code that runs. Hit <strong>Run ▶</strong> to execute it in your browser, or <strong>Copy</strong> it
         into your project. For full type signatures see the{" "}
-        <a href="/api" target="_blank" rel="noreferrer">
+        <a href="/api/" target="_blank" rel="noreferrer">
           API reference ↗
         </a>
         .

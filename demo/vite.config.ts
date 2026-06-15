@@ -1,6 +1,33 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+// The generated TypeDoc API reference lives in `public/api` (so the build copies
+// it to `dist/api`). In dev AND preview, Vite's SPA history-fallback serves the
+// app's index.html for any extension-less path — so `/api` would render the app,
+// not the docs. This plugin intercepts `/api` (302 → `/api/`, so the docs' own
+// RELATIVE links resolve under `/api/…`) and serves `public/api/index.html` for
+// `/api/`. Deep links like `/api/classes/x.html` are real static files and pass
+// through untouched.
+function serveTypedoc(): Plugin {
+  const middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    const path = (req.url ?? "").split("?")[0];
+    if (path === "/api") {
+      res.statusCode = 302;
+      res.setHeader("Location", "/api/");
+      res.end();
+      return;
+    }
+    if (path === "/api/") req.url = "/api/index.html";
+    next();
+  };
+  return {
+    name: "serve-typedoc-api",
+    configureServer: (server) => void server.middlewares.use(middleware),
+    configurePreviewServer: (server) => void server.middlewares.use(middleware),
+  };
+}
 
 // The lab imports the real SDK from ../src and the harness from ../test/harness,
 // both of which live outside this package's root, so the dev server must be
@@ -27,7 +54,7 @@ const demoModule = (name: string) =>
 const repoFile = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), serveTypedoc()],
   // @solana/web3.js v1 and the wallet-adapter reference `global`; map it to globalThis.
   define: { global: "globalThis" },
   resolve: {

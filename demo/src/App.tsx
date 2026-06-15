@@ -86,7 +86,7 @@ export function App() {
         <button className="mono" data-active={view === "docs"} onClick={() => setView("docs")}>
           Docs &amp; Examples
         </button>
-        <a className="mono" href="/api" target="_blank" rel="noreferrer">
+        <a className="mono" href="/api/" target="_blank" rel="noreferrer">
           API reference ↗
         </a>
       </nav>
