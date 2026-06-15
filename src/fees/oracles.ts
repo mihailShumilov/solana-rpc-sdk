@@ -5,7 +5,6 @@
  * means the SDK works with any of them behind one interface.
  */
 import type { Address, Rpc, SolanaRpcApi } from "@solana/kit";
-import { NotImplementedError } from "../errors.js";
 
 export type FeeLevel = "min" | "low" | "medium" | "high" | "veryHigh";
 
@@ -75,10 +74,56 @@ export interface HttpFeeOracleConfig {
   fetchImpl?: typeof fetch;
 }
 
-/** Helius getPriorityFeeEstimate (account-aware percentiles). */
+/**
+ * Helius `getPriorityFeeEstimate` — account-aware percentile estimates. Helius
+ * already returns micro-lamports-per-CU figures keyed by the same level names we
+ * expose (`priorityFeeLevels`), so the mapping is direct. `fetchImpl` is
+ * injectable for deterministic tests and defaults to the global `fetch`; the
+ * API key, when provided, is appended to the request URL.
+ */
 export class HeliusFeeOracle implements FeeOracle {
-  constructor(_config: HttpFeeOracleConfig) {}
-  getPriorityFee(_writableAccounts: string[]): Promise<PriorityFeeEstimate> {
-    throw new NotImplementedError("HeliusFeeOracle.getPriorityFee");
+  private readonly config: HttpFeeOracleConfig;
+
+  constructor(config: HttpFeeOracleConfig) {
+    this.config = config;
+  }
+
+  async getPriorityFee(writableAccounts: string[]): Promise<PriorityFeeEstimate> {
+    const fetchImpl = this.config.fetchImpl ?? globalThis.fetch;
+    const url = this.config.apiKey
+      ? `${this.config.url}?api-key=${this.config.apiKey}`
+      : this.config.url;
+
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "1",
+        method: "getPriorityFeeEstimate",
+        params: [
+          {
+            accountKeys: writableAccounts,
+            options: { includeAllPriorityFeeLevels: true },
+          },
+        ],
+      }),
+    });
+
+    const body = (await res.json()) as {
+      result?: { priorityFeeLevels?: Partial<Record<FeeLevel, number>> };
+    };
+    const fees = body.result?.priorityFeeLevels ?? {};
+    const microLamports = (v: number | undefined): number => Math.round(Number(v ?? 0));
+
+    return {
+      levels: {
+        min: microLamports(fees.min),
+        low: microLamports(fees.low),
+        medium: microLamports(fees.medium),
+        high: microLamports(fees.high),
+        veryHigh: microLamports(fees.veryHigh),
+      },
+    };
   }
 }
