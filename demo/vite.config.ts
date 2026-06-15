@@ -7,6 +7,8 @@ import react from "@vitejs/plugin-react";
 // relative imports to their `.ts` sources automatically.
 export default defineConfig({
   plugins: [react()],
+  // @solana/web3.js v1 and the wallet-adapter reference `global`; map it to globalThis.
+  define: { global: "globalThis" },
   server: {
     fs: { allow: [".."] },
   },

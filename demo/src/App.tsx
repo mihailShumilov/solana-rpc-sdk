@@ -1,4 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import type { VersionedTransaction } from "@solana/web3.js";
 import {
   Lab,
   type DevnetView,
@@ -39,6 +42,20 @@ export function App() {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
+  // Bridge the standard wallet-adapter into the Lab: address + signer, or null.
+  const { publicKey, connected, signTransaction } = useWallet();
+  useEffect(() => {
+    if (connected && publicKey && signTransaction) {
+      const sign = signTransaction;
+      lab.setWallet({
+        address: publicKey.toBase58(),
+        signTransaction: (tx: VersionedTransaction) => sign(tx),
+      });
+    } else {
+      lab.setWallet(null);
+    }
+  }, [connected, publicKey, signTransaction, lab]);
+
   return (
     <div className="shell">
       <header className="topbar">
@@ -49,6 +66,7 @@ export function App() {
         </div>
         <div className="topbar-right">
           <NetworkSwitch network={state.network} disabled={state.running} onChange={(n) => lab.setNetwork(n)} />
+          {devnet && <WalletMultiButton />}
           {!devnet && <Clock slot={state.slot} />}
           <button className="theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? "◐ light" : "◑ dark"}
@@ -258,48 +276,18 @@ function DevnetPanel({ lab, dv }: { lab: Lab; dv: DevnetView }) {
     <section className="card devnet-panel">
       <header>
         <h2>Devnet · real transactions</h2>
-        <span className="meta">{dv.connected ? "wallet connected" : dv.available ? "phantom ready" : "no wallet"}</span>
+        <span className="meta">{dv.connected ? "wallet connected" : "connect a wallet ↗"}</span>
       </header>
       <div className="card-body devnet-grid">
         <p className="warn-note">
-          ⚠ Devnet only. Connect Phantom and approve a 0.0001 SOL transfer; the SDK lands it on devnet and links the
-          explorer. The recipient is fixed (below); flip <code>SDK</code> off to compare against a naive single broadcast.
+          ⚠ Devnet only. Use the <b>Select / Connect Wallet</b> button (top right) to connect, then{" "}
+          <b>Send devnet tx</b> — the wallet signs a 0.0001 SOL transfer and the SDK lands it on devnet. The recipient is
+          fixed (below); flip <code>SDK</code> off to compare against a naive single broadcast.
         </p>
-
-        <div className="kp-row">
-          {dv.connected ? (
-            <>
-              <button className="btn-ghost mono" onClick={() => lab.disconnectWallet()}>
-                disconnect
-              </button>
-              <a onClick={() => void lab.refreshBalance()} style={{ cursor: "pointer" }}>
-                refresh balance
-              </a>
-            </>
-          ) : (
-            <button className="btn-send" style={{ padding: "10px 18px" }} onClick={() => void lab.connectWallet()}>
-              Connect Phantom
-            </button>
-          )}
-        </div>
-
-        {dv.error && (
-          <p className="warn-note" style={{ color: "var(--coral)" }}>
-            {dv.error}
-            {!dv.available && (
-              <>
-                {" — "}
-                <a href="https://phantom.app/" target="_blank" rel="noreferrer">
-                  get Phantom ↗
-                </a>
-              </>
-            )}
-          </p>
-        )}
 
         <div className="kp-meta">
           <span>
-            from <b>{dv.address ?? "—"}</b>
+            from <b>{dv.address ?? "— not connected —"}</b>
           </span>
           <span>
             balance <b>{dv.loadingBalance ? "…" : dv.balanceSol === null ? "—" : `${dv.balanceSol.toFixed(4)} SOL`}</b>
@@ -307,11 +295,19 @@ function DevnetPanel({ lab, dv }: { lab: Lab; dv: DevnetView }) {
           <span>
             to <b>{dv.recipient}</b>
           </span>
+          {dv.connected && (
+            <a onClick={() => void lab.refreshBalance()} style={{ cursor: "pointer" }}>
+              refresh
+            </a>
+          )}
           {dv.address && (
             <a href={`https://explorer.solana.com/address/${dv.address}?cluster=devnet`} target="_blank" rel="noreferrer">
               sender ↗
             </a>
           )}
+          <a href="https://faucet.solana.com/" target="_blank" rel="noreferrer">
+            faucet ↗
+          </a>
         </div>
 
         {dv.explorerUrl && (

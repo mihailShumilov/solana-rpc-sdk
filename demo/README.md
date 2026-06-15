@@ -63,14 +63,17 @@ npm run preview    # serves the built bundle
 
 ## Devnet mode (real transactions)
 
-Switch the network to **devnet** to land a real transaction with **Phantom**:
+Switch the network to **devnet** to land a real transaction. Wallet connection
+uses the standard Solana **wallet-adapter** (`WalletMultiButton` top-right +
+the usual selection modal; any Wallet-Standard wallet such as Phantom is
+auto-detected):
 
-1. **Connect Phantom** — the panel connects the injected Phantom provider and
-   shows the wallet address and its devnet balance (fund it via the linked
-   faucet if empty). Make sure Phantom itself is set to **Devnet**.
-2. **Send devnet tx** — Phantom is asked to sign a 0.0001 SOL transfer from your
-   wallet to a fixed recipient (`C29D7kTebateDoX7Y1qCugRu5AaY2j34fHZnAkY2fNhK`).
-   The signed bytes are then landed by the real `TransactionSender` against
+1. Click **Select Wallet** (top right) and connect — the panel shows the wallet
+   address and its devnet balance (fund it via the linked faucet if empty). Set
+   the wallet to **Devnet**.
+2. **Send devnet tx** — the wallet signs a 0.0001 SOL transfer from your wallet
+   to a fixed recipient (`C29D7kTebateDoX7Y1qCugRu5AaY2j34fHZnAkY2fNhK`). The
+   signed bytes are then landed by the real `TransactionSender` against
    `api.devnet.solana.com` (the SDK does the broadcast/rebroadcast/confirm — the
    wallet only signs, the kit never sees the key).
 3. The event log prints the confirmed signature and an **explorer link**; the
@@ -78,8 +81,8 @@ Switch the network to **devnet** to land a real transaction with **Phantom**:
    a naive single broadcast on the real network.
 
 > ⚠️ **Devnet only.** The transaction is built with `@solana/web3.js` v1 (what
-> Phantom signs) and sent by the kit. Needs the Phantom extension and a browser
-> with WebCrypto; relies on the public devnet RPC's permissive CORS.
+> the wallet signs) and sent by the kit. Relies on the public devnet RPC's
+> permissive CORS.
 
 ## How the live telemetry works
 

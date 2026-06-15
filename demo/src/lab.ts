@@ -35,7 +35,8 @@ import {
   MockJitoEngine,
   type EndpointFaultProfile,
 } from "../../test/harness/index.js";
-import { buildTransfer, bytesToBase64, getPhantom } from "./phantom.js";
+import type { VersionedTransaction } from "@solana/web3.js";
+import { buildTransfer, bytesToBase64 } from "./txbuild.js";
 
 export type Network = "sim" | "devnet";
 export type Scenario = "healthy" | "drop" | "429" | "lag" | "jito-fail" | "congestion";
@@ -84,14 +85,17 @@ export interface ScenarioInfo {
   withKit: string;
 }
 
+export interface WalletSigner {
+  address: string;
+  signTransaction: (tx: VersionedTransaction) => Promise<VersionedTransaction>;
+}
+
 export interface DevnetView {
-  available: boolean;
   connected: boolean;
   address: string | null;
   recipient: string;
   balanceSol: number | null;
   loadingBalance: boolean;
-  error: string | null;
   lastSignature: string | null;
   explorerUrl: string | null;
 }
@@ -238,10 +242,10 @@ export class Lab {
   private tally = { sdk: { confirmed: 0, total: 0 }, naive: { confirmed: 0, total: 0 } };
 
   // devnet / wallet
+  private walletSigner: WalletSigner | null = null;
   private walletAddress: string | null = null;
   private balanceSol: number | null = null;
   private loadingBalance = false;
-  private walletError: string | null = null;
   private lastSignature: string | null = null;
 
   network: Network = "sim";
@@ -297,13 +301,11 @@ export class Lab {
       info: SCENARIO_INFO[this.scenario],
       comparison: { sdk: this.toTally(this.tally.sdk), naive: this.toTally(this.tally.naive) },
       devnet: {
-        available: getPhantom() !== null,
-        connected: this.walletAddress !== null,
+        connected: this.walletSigner !== null,
         address: this.walletAddress,
         recipient: RECIPIENT,
         balanceSol: this.balanceSol,
         loadingBalance: this.loadingBalance,
-        error: this.walletError,
         lastSignature: this.lastSignature,
         explorerUrl: this.lastSignature ? explorerTx(this.lastSignature) : null,
       },
@@ -321,7 +323,6 @@ export class Lab {
     if (network === "devnet") {
       this.viaJito = false;
       this.ensureDevnetPool();
-      void this.tryEagerConnect();
     }
     this.onUpdate();
   }
@@ -369,50 +370,23 @@ export class Lab {
 
   // ---- wallet (devnet) ---------------------------------------------------
 
-  async connectWallet(): Promise<void> {
-    const provider = getPhantom();
-    if (!provider) {
-      this.walletError = "Phantom not detected — install the Phantom browser extension";
-      this.onUpdate();
-      return;
+  /** Bridge from the React wallet-adapter: the connected wallet's address +
+   * signer, or null when disconnected. The standard WalletMultiButton drives
+   * connect/disconnect; the Lab just consumes the result. */
+  setWallet(wallet: WalletSigner | null): void {
+    const nextAddr = wallet?.address ?? null;
+    const changed = nextAddr !== this.walletAddress;
+    this.walletSigner = wallet;
+    this.walletAddress = nextAddr;
+    if (!changed) return; // same wallet, signer ref refreshed silently — no re-render
+    if (wallet) {
+      this.line(`wallet connected · ${wallet.address}`, "good");
+      void this.refreshBalance();
+    } else {
+      this.balanceSol = null;
+      this.line("wallet disconnected", "muted");
     }
-    try {
-      const resp = await provider.connect();
-      this.walletAddress = resp.publicKey.toString();
-      this.walletError = null;
-      this.line(`wallet connected · ${this.walletAddress}`, "good");
-      this.onUpdate();
-      await this.refreshBalance();
-    } catch (e) {
-      this.walletError = `connect failed: ${errMsg(e)}`;
-      this.onUpdate();
-    }
-  }
-
-  disconnectWallet(): void {
-    try {
-      void getPhantom()?.disconnect();
-    } catch {
-      /* ignore */
-    }
-    this.walletAddress = null;
-    this.balanceSol = null;
-    this.walletError = null;
-    this.line("wallet disconnected", "muted");
     this.onUpdate();
-  }
-
-  private async tryEagerConnect(): Promise<void> {
-    const provider = getPhantom();
-    if (!provider) return;
-    try {
-      const resp = await provider.connect({ onlyIfTrusted: true });
-      this.walletAddress = resp.publicKey.toString();
-      this.onUpdate();
-      await this.refreshBalance();
-    } catch {
-      /* not previously trusted — wait for an explicit connect */
-    }
   }
 
   async refreshBalance(): Promise<void> {
@@ -591,10 +565,10 @@ export class Lab {
 
   /** Connect-wallet → sign with Phantom → land through the SDK on real devnet. */
   private async runDevnet(sleep: () => Promise<void>, sdk: boolean): Promise<Outcome> {
-    const provider = getPhantom();
-    if (!provider || !this.walletAddress) {
+    const wallet = this.walletSigner;
+    if (!wallet || !this.walletAddress) {
       this.mark("outcome", "failed", "no wallet");
-      this.line("connect Phantom first", "error");
+      this.line("connect a wallet first", "error");
       return "failed";
     }
     if (this.balanceSol !== null && this.balanceSol <= 0) {
@@ -614,7 +588,7 @@ export class Lab {
     let signedBytes: Uint8Array;
     let sig0: Uint8Array | undefined;
     try {
-      const signed = await provider.signTransaction(vtx);
+      const signed = await wallet.signTransaction(vtx);
       signedBytes = signed.serialize();
       sig0 = signed.signatures[0];
     } catch (e) {
