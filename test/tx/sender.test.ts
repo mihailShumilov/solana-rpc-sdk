@@ -4,7 +4,7 @@
  * height, give up at expiry, and NEVER mutate/re-sign the transaction.
  */
 import { describe, it, expect } from "vitest";
-import { createSolanaRpcFromTransport } from "@solana/kit";
+import { createSolanaRpcFromTransport, type Rpc, type SolanaRpcApi } from "@solana/kit";
 import { TransactionSender } from "../../src/tx/sender.js";
 import { InMemoryMetrics } from "../../src/observability/metrics.js";
 import { MockCluster, MockEndpoint } from "../harness/index.js";
@@ -65,6 +65,39 @@ describe("TransactionSender", () => {
       lastValidBlockHeight: 800n,
     });
     expect(res.signature).toBe("SigSend4");
+  });
+
+  it("does not abort confirmation when a rebroadcast resend errors (already-processed)", async () => {
+    // Once a tx lands, an RPC rejects a resend of the same bytes with a preflight
+    // failure ("already processed"). That MUST NOT turn an already-landed tx into
+    // a reported failure: the outcome is decided by confirmation status, not by a
+    // resend error. A minimal fake RPC reproduces the resend-throws behaviour the
+    // mock harness doesn't model.
+    const call = <T,>(v: T) => ({ send: async () => v });
+    let sends = 0;
+    let polls = 0;
+    const rpc = {
+      sendTransaction: () => ({
+        send: async () => {
+          sends++;
+          if (sends > 1) throw new Error("Transaction simulation failed: This transaction has already been processed");
+          return "ok";
+        },
+      }),
+      getSignatureStatuses: () =>
+        call({ value: [++polls >= 3 ? { err: null, confirmationStatus: "confirmed", slot: 123n } : null] }),
+      getBlockHeight: () => call(700n),
+    } as unknown as Rpc<SolanaRpcApi>;
+
+    const sender = new TransactionSender(rpc, { sleep: async () => {} });
+    const res = await sender.sendAndConfirm({
+      wireTransaction: "WIRE",
+      signature: "SIG",
+      lastValidBlockHeight: 800n,
+    });
+    expect(res.outcome).toBe("confirmed");
+    expect(res.rebroadcasts).toBeGreaterThanOrEqual(1);
+    expect(sends).toBeGreaterThan(1); // at least one resend threw and was tolerated
   });
 
   it("emits landing metrics", async () => {

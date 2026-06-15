@@ -73,7 +73,10 @@ export class TransactionSender {
         })
         .send();
 
-    // Initial broadcast: the first send, with maxRetries disabled.
+    // Initial broadcast: the first send, with maxRetries disabled. A failure
+    // here is a genuine signal that the transaction is malformed or unfundable
+    // (e.g. InsufficientFundsForRent / bad blockhash) and will never land, so we
+    // surface it immediately rather than spinning the confirm loop.
     await broadcast();
 
     let rebroadcasts = 0;
@@ -83,7 +86,17 @@ export class TransactionSender {
     // one resend of the identical signed bytes before the next status check.
     const tracker = new ConfirmationTracker(this.rpc, {
       sleep: async (ms) => {
-        await broadcast(); // resend SAME wireTransaction, maxRetries 0n — never re-sign
+        // Resend the SAME signed bytes (never re-sign). Once the tx lands, an
+        // RPC rejects a resend with "already processed" (a preflight failure),
+        // and transient transport errors are possible too. NONE of these are
+        // terminal: the outcome is decided solely by confirmation status bounded
+        // by lastValidBlockHeight. Swallow the error so a failed resend can never
+        // turn an already-landed transaction into a reported failure.
+        try {
+          await broadcast();
+        } catch {
+          // expected on resend (already-processed / transient) — keep polling
+        }
         rebroadcasts++;
         this.metrics?.recordRebroadcast(config.signature);
         await this.sleep(ms); // injected sleep advances the (mock) clock
