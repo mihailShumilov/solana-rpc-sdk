@@ -1,0 +1,12 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts", "test/harness/index.ts"],
+  "out": "demo/public/api",
+  "includeVersion": true,
+  "excludePrivate": true,
+  "readme": "none",
+  "navigationLinks": {
+    "Demo": "/",
+    "GitHub": "https://github.com/mihailShumilov/solana-rpc-sdk"
+  }
+}
