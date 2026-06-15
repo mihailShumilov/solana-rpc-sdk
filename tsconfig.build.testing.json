@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "test/harness",
+    "outDir": "dist/testing",
+    "sourceMap": false,
+    "declaration": true,
+    "declarationMap": false,
+    "noEmit": false
+  },
+  "include": ["test/harness/**/*.ts"],
+  "exclude": ["dist", "node_modules", "demo", "examples", "**/*.test.ts"]
+}
