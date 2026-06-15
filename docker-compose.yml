@@ -1,0 +1,60 @@
+# Automated, reproducible runs in Docker. Source is bind-mounted for live dev,
+# while an anonymous volume preserves the image's node_modules (so the host
+# platform's binaries never shadow the container's).
+#
+#   docker compose run --rm test         # typecheck + full suite (one-shot)
+#   docker compose up watch              # vitest watch (live TDD loop)
+#   docker compose run --rm cov          # coverage report -> ./coverage on host
+#   docker compose run --rm shell        # interactive shell in the env
+
+services:
+  test:
+    build:
+      context: .
+      target: dev
+    command: sh -c "npm run typecheck && npm test"
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  # Confirms the Docker env itself is healthy: typecheck + the always-green
+  # harness & metrics tests (no red module specs). Exits 0 on a correct setup.
+  verify:
+    build:
+      context: .
+      target: dev
+    command: sh -c "npm run typecheck && npx vitest run test/harness test/observability"
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  watch:
+    build:
+      context: .
+      target: dev
+    command: npm run test:watch
+    volumes:
+      - .:/app
+      - /app/node_modules
+    tty: true
+    stdin_open: true
+
+  cov:
+    build:
+      context: .
+      target: dev
+    command: npm run test:cov
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  shell:
+    build:
+      context: .
+      target: dev
+    command: bash
+    volumes:
+      - .:/app
+      - /app/node_modules
+    tty: true
+    stdin_open: true
