@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import type { VersionedTransaction } from "@solana/web3.js";
+import { Docs } from "./Docs";
 import {
   Lab,
   type DevnetView,
@@ -26,6 +27,7 @@ const SCENARIOS: { id: Scenario; label: string }[] = [
 ];
 
 type Theme = "dark" | "light";
+type View = "lab" | "docs";
 
 export function App() {
   const [, force] = useReducer((n: number) => n + 1, 0);
@@ -34,6 +36,9 @@ export function App() {
   const lab = labRef.current;
   const state = lab.getState();
   const devnet = state.network === "devnet";
+
+  const [view, setView] = useState<View>("lab");
+  const labView = view === "lab";
 
   const [theme, setTheme] = useState<Theme>(
     () => (document.documentElement.getAttribute("data-theme") as Theme) ?? "dark",
@@ -65,77 +70,95 @@ export function App() {
           <span className="tag">solana-resilience-kit · live</span>
         </div>
         <div className="topbar-right">
-          <NetworkSwitch network={state.network} disabled={state.running} onChange={(n) => lab.setNetwork(n)} />
-          {devnet && <WalletMultiButton />}
-          {!devnet && <Clock slot={state.slot} />}
+          {labView && <NetworkSwitch network={state.network} disabled={state.running} onChange={(n) => lab.setNetwork(n)} />}
+          {labView && devnet && <WalletMultiButton />}
+          {labView && !devnet && <Clock slot={state.slot} />}
           <button className="theme-toggle" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? "◐ light" : "◑ dark"}
           </button>
         </div>
       </header>
 
-      <p className="intro">
-        The real SDK runs in your browser. In <code>simulation</code> it drives a deterministic Solana
-        harness — inject faults, then flip <code>SDK</code> off to see how a naive client fares. In{" "}
-        <code>devnet</code> it builds, signs, and lands a real transaction you can open in the explorer.
-      </p>
+      <nav className="mainnav">
+        <button className="mono" data-active={labView} onClick={() => setView("lab")}>
+          Lab
+        </button>
+        <button className="mono" data-active={view === "docs"} onClick={() => setView("docs")}>
+          Docs &amp; Examples
+        </button>
+        <a className="mono" href="/api" target="_blank" rel="noreferrer">
+          API reference ↗
+        </a>
+      </nav>
 
-      <ControlDeck lab={lab} state={state} />
-      {devnet ? (
-        <DevnetPanel lab={lab} dv={state.devnet} />
+      {!labView ? (
+        <Docs />
       ) : (
-        <ScenarioExplainer info={state.info} sdkEnabled={state.sdkEnabled} />
-      )}
+        <>
+          <p className="intro">
+            The real SDK runs in your browser. In <code>simulation</code> it drives a deterministic Solana
+            harness — inject faults, then flip <code>SDK</code> off to see how a naive client fares. In{" "}
+            <code>devnet</code> it builds, signs, and lands a real transaction you can open in the explorer.
+          </p>
 
-      <div className="grid">
-        <div className="col">
-          {!devnet && (
-            <section className="card">
-              <header>
-                <h2>Endpoints</h2>
-                <span className="meta">block {state.blockHeight.toLocaleString()}</span>
-              </header>
-              <div className="card-body">
-                <div className="endpoints">
-                  {state.endpoints.map((ep) => (
-                    <EndpointCard key={ep.name} ep={ep} />
-                  ))}
-                </div>
-              </div>
-            </section>
+          <ControlDeck lab={lab} state={state} />
+          {devnet ? (
+            <DevnetPanel lab={lab} dv={state.devnet} />
+          ) : (
+            <ScenarioExplainer info={state.info} sdkEnabled={state.sdkEnabled} />
           )}
 
-          <section className="card">
-            <header>
-              <h2>Pipeline</h2>
-              <span className="meta">{state.running ? "running…" : state.sdkEnabled ? "resilient" : "naive baseline"}</span>
-            </header>
-            <div className="card-body">
-              <Pipeline steps={state.steps} />
-            </div>
-          </section>
-        </div>
+          <div className="grid">
+            <div className="col">
+              {!devnet && (
+                <section className="card">
+                  <header>
+                    <h2>Endpoints</h2>
+                    <span className="meta">block {state.blockHeight.toLocaleString()}</span>
+                  </header>
+                  <div className="card-body">
+                    <div className="endpoints">
+                      {state.endpoints.map((ep) => (
+                        <EndpointCard key={ep.name} ep={ep} />
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              )}
 
-        <div className="col">
-          <section className="card">
-            <header>
-              <h2>Scoreboard &amp; telemetry</h2>
-              <span className="meta">cumulative</span>
-            </header>
-            <div className="card-body">
-              <MetricsPanel m={state.metrics} comparison={state.comparison} />
+              <section className="card">
+                <header>
+                  <h2>Pipeline</h2>
+                  <span className="meta">{state.running ? "running…" : state.sdkEnabled ? "resilient" : "naive baseline"}</span>
+                </header>
+                <div className="card-body">
+                  <Pipeline steps={state.steps} />
+                </div>
+              </section>
             </div>
-          </section>
 
-          <section className="card">
-            <header>
-              <h2>Event log</h2>
-              <span className="meta">{state.log.length} lines</span>
-            </header>
-            <EventLog log={state.log} />
-          </section>
-        </div>
-      </div>
+            <div className="col">
+              <section className="card">
+                <header>
+                  <h2>Scoreboard &amp; telemetry</h2>
+                  <span className="meta">cumulative</span>
+                </header>
+                <div className="card-body">
+                  <MetricsPanel m={state.metrics} comparison={state.comparison} />
+                </div>
+              </section>
+
+              <section className="card">
+                <header>
+                  <h2>Event log</h2>
+                  <span className="meta">{state.log.length} lines</span>
+                </header>
+                <EventLog log={state.log} />
+              </section>
+            </div>
+          </div>
+        </>
+      )}
 
       <footer className="footer">
         <span>real SDK · {devnet ? "real devnet" : "simulation harness"} · vendor-neutral resilience</span>

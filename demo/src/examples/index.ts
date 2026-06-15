@@ -1,0 +1,111 @@
+/**
+ * Cookbook registry. Each example is imported TWICE from the same file — as a
+ * module (its `run`, executed by the Run button) and as raw text (via `?raw`,
+ * shown in the code block). One file, one source of truth: what you read is
+ * exactly what runs.
+ */
+import type { ExampleResult } from "./types.js";
+
+import { run as failoverPool } from "./failover-pool.js";
+import failoverPoolSrc from "./failover-pool.ts?raw";
+import { run as reliableSend } from "./reliable-send.js";
+import reliableSendSrc from "./reliable-send.ts?raw";
+import { run as blockhashExpiry } from "./blockhash-expiry.js";
+import blockhashExpirySrc from "./blockhash-expiry.ts?raw";
+import { run as freshnessRouting } from "./freshness-routing.js";
+import freshnessRoutingSrc from "./freshness-routing.ts?raw";
+import { run as jitoFallback } from "./jito-fallback.js";
+import jitoFallbackSrc from "./jito-fallback.ts?raw";
+import { run as feeEstimation } from "./fee-estimation.js";
+import feeEstimationSrc from "./fee-estimation.ts?raw";
+import { run as observability } from "./observability.js";
+import observabilitySrc from "./observability.ts?raw";
+import { run as testYourDapp } from "./test-your-dapp.js";
+import testYourDappSrc from "./test-your-dapp.ts?raw";
+
+export interface Example {
+  id: string;
+  title: string;
+  /** Short tag shown in the card header. */
+  tag: string;
+  description: string;
+  /** The example's full source (single source of truth). */
+  code: string;
+  /** Runs the example against the harness and returns its result. */
+  run: () => Promise<ExampleResult>;
+}
+
+export const EXAMPLES: Example[] = [
+  {
+    id: "failover-pool",
+    title: "Failover pool",
+    tag: "rpc · failover",
+    description:
+      "One endpoint rate-limits with HTTP 429, the other is healthy. A read fails over to the backup automatically — pool.rpc() is just a normal @solana/kit RPC.",
+    code: failoverPoolSrc,
+    run: failoverPool,
+  },
+  {
+    id: "reliable-send",
+    title: "Reliable send",
+    tag: "tx · rebroadcast",
+    description:
+      "A dropped broadcast returns no error and never lands. The sender uses maxRetries:0 and its own rebroadcast loop — resending the SAME bytes, bounded by lastValidBlockHeight — until it confirms.",
+    code: reliableSendSrc,
+    run: reliableSend,
+  },
+  {
+    id: "blockhash-expiry",
+    title: "Blockhash expiry",
+    tag: "tx · termination",
+    description:
+      "A tx that never lands must terminate, not spin forever. The loop is bounded solely by lastValidBlockHeight: it stops at expiry, returns a clean 'expired', and never re-signs.",
+    code: blockhashExpirySrc,
+    run: blockhashExpiry,
+  },
+  {
+    id: "freshness-routing",
+    title: "Freshness routing",
+    tag: "rpc · health",
+    description:
+      "A lagging RPC answers fine but is hundreds of slots behind — a silent tx killer. The HealthMonitor probes every node's slot and routes around the laggard, even when it's listed first.",
+    code: freshnessRoutingSrc,
+    run: freshnessRouting,
+  },
+  {
+    id: "jito-fallback",
+    title: "Jito with fallback",
+    tag: "jito · mev",
+    description:
+      "A bundle_id is a receipt, not a landing guarantee. The router polls bundle status a bounded number of times, then falls back to RPC submission with the same signed bytes → confirmed.",
+    code: jitoFallbackSrc,
+    run: jitoFallback,
+  },
+  {
+    id: "fee-estimation",
+    title: "Fee / CU estimation",
+    tag: "fees · compute",
+    description:
+      "Priority fee is charged on the CU limit you request. Simulate for actual compute units, add a +10% margin, and pair it with a percentile fee from a pluggable oracle.",
+    code: feeEstimationSrc,
+    run: feeEstimation,
+  },
+  {
+    id: "observability",
+    title: "Observability",
+    tag: "metrics",
+    description:
+      "One Metrics sink, shared by the pool and sender, captures landing rate, failovers, and rebroadcasts across a batch of sends — with zero extra instrumentation in your code.",
+    code: observabilitySrc,
+    run: observability,
+  },
+  {
+    id: "test-your-dapp",
+    title: "Test your dApp",
+    tag: "testing harness",
+    description:
+      "The deterministic harness ships under solana-resilience-kit/testing. Script the happy path and the failure paths your code must survive — no network, no flake. Drops straight into Vitest/Jest.",
+    code: testYourDappSrc,
+    run: testYourDapp,
+  },
+];

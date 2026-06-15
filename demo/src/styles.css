@@ -1018,3 +1018,206 @@ body {
 .explorer-link a {
   color: var(--accent);
 }
+
+/* ---- top navigation ------------------------------------------------------- */
+
+.mainnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mainnav button,
+.mainnav a {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 11px 14px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.16s, border-color 0.16s;
+}
+
+.mainnav button:hover,
+.mainnav a:hover {
+  color: var(--text);
+}
+
+.mainnav button[data-active="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.mainnav a {
+  margin-left: auto;
+  color: var(--faint);
+}
+
+.mainnav a:hover {
+  color: var(--accent);
+}
+
+/* ---- docs & examples (cookbook) ------------------------------------------- */
+
+.docs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .docs {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ex-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ex-desc {
+  margin: 0;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.code-wrap {
+  position: relative;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 5px 9px;
+  cursor: pointer;
+  transition: color 0.16s, border-color 0.16s;
+}
+
+.copy-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.code {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 14px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.code code {
+  font-family: inherit;
+  color: inherit;
+}
+
+.ex-run {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ex-run .btn-send {
+  padding: 9px 18px;
+  font-size: 12px;
+}
+
+.ex-run-hint {
+  font-size: 11px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
+.run-err {
+  font-size: 12px;
+  color: var(--coral);
+  background: color-mix(in srgb, var(--coral) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--coral) 35%, transparent);
+  border-radius: var(--r);
+  padding: 9px 12px;
+  word-break: break-word;
+}
+
+.run-out {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: slidein 0.18s var(--ease);
+}
+
+.run-log {
+  background: var(--inset);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+
+.run-log-line {
+  display: flex;
+  gap: 8px;
+}
+
+.run-arrow {
+  color: var(--accent);
+}
+
+.run-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r);
+  padding: 7px 11px;
+  font-size: 12px;
+}
+
+.run-k {
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
+.run-v {
+  color: var(--text);
+  font-weight: 700;
+}

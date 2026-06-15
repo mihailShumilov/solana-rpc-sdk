@@ -15,6 +15,41 @@ It imports the actual modules — nothing is reimplemented for the demo:
 - `MockCluster`, `MockEndpoint`, `MockJitoEngine` from
   [`../test/harness`](../test/harness)
 
+## Two sections
+
+The top navigation switches between two views:
+
+- **Lab** — the interactive fault-injection console described below.
+- **Docs & Examples** — a runnable cookbook (see next section).
+- **API reference ↗** — the generated TypeDoc, served at [`/api`](./public/api)
+  (built with `npm run docs:api` from the repo root).
+
+## Docs & Examples (runnable cookbook)
+
+A library of copy-pasteable recipes. Each example lives in its own file under
+[`src/examples/`](./src/examples) and exports an `async run()` that drives the
+**real** SDK (imported as `solana-resilience-kit`) against the **real** harness
+(`solana-resilience-kit/testing`). Every file is imported twice — as a module
+(to execute) and as text via Vite's `?raw` (to display) — so the code you read
+is exactly the code that runs. Each card has a **Copy** button and a **Run ▶**
+button that executes the example in the browser and renders its log + result.
+
+Included recipes:
+
+1. **Failover pool** — a 429 node + a healthy node; a read fails over to the backup.
+2. **Reliable send** — `maxRetries: 0` + the kit's own rebroadcast loop → confirmed.
+3. **Blockhash expiry** — a dropped tx terminates at `lastValidBlockHeight` (no infinite loop, no re-sign).
+4. **Freshness routing** — a lagging node is detected and skipped.
+5. **Jito with fallback** — a bundle that never lands falls back to RPC → confirmed.
+6. **Fee / CU estimation** — simulate for compute units (+10%) and a percentile priority fee.
+7. **Observability** — landing rate / failovers / rebroadcasts from `InMemoryMetrics` after a batch of sends.
+8. **Test your dApp** — script happy + failure paths against the `…/testing` harness (drops into Vitest/Jest).
+
+> The examples import the published package names (`solana-resilience-kit` and
+> `solana-resilience-kit/testing`) so the displayed code is exactly what a
+> consumer writes; [`vite.config.ts`](./vite.config.ts) aliases those specifiers
+> to the in-repo TypeScript sources for the demo build.
+
 ## Run it
 
 ```bash

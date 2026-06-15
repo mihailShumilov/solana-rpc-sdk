@@ -18,15 +18,27 @@ import { fileURLToPath } from "node:url";
 const demoModule = (name: string) =>
   fileURLToPath(new URL(`./node_modules/${name}`, import.meta.url));
 
+// The cookbook examples import the published package names —
+// `solana-resilience-kit` and `solana-resilience-kit/testing` — so the displayed
+// code is exactly what a consumer writes. There is no published copy on disk
+// here, so we alias those specifiers to the in-repo TypeScript sources (`../src`
+// and `../test/harness`). Vite resolves their `.js` ESM imports to the `.ts`
+// sources, just like the Lab does.
+const repoFile = (p: string) => fileURLToPath(new URL(`../${p}`, import.meta.url));
+
 export default defineConfig({
   plugins: [react()],
   // @solana/web3.js v1 and the wallet-adapter reference `global`; map it to globalThis.
   define: { global: "globalThis" },
   resolve: {
-    alias: {
-      "@solana/kit": demoModule("@solana/kit"),
-      "@opentelemetry/api": demoModule("@opentelemetry/api"),
-    },
+    // Array form so the `/testing` subpath is matched before the bare package
+    // (first match wins). Order matters.
+    alias: [
+      { find: /^solana-resilience-kit\/testing$/, replacement: repoFile("test/harness/index.ts") },
+      { find: /^solana-resilience-kit$/, replacement: repoFile("src/index.ts") },
+      { find: "@solana/kit", replacement: demoModule("@solana/kit") },
+      { find: "@opentelemetry/api", replacement: demoModule("@opentelemetry/api") },
+    ],
   },
   server: {
     fs: { allow: [".."] },
