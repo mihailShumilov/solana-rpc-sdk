@@ -1,5 +1,10 @@
 # solana-resilience-kit
 
+[![npm version](https://img.shields.io/npm/v/solana-resilience-kit.svg)](https://www.npmjs.com/package/solana-resilience-kit)
+[![npm downloads](https://img.shields.io/npm/dm/solana-resilience-kit.svg)](https://www.npmjs.com/package/solana-resilience-kit)
+[![types included](https://img.shields.io/npm/types/solana-resilience-kit.svg)](https://www.npmjs.com/package/solana-resilience-kit)
+[![license: MIT](https://img.shields.io/npm/l/solana-resilience-kit.svg)](./LICENSE)
+
 A vendor-neutral, **client-side resilience and observability layer for Solana dApps**, built on `@solana/kit` (web3.js v2). It unifies the reliability work that is today either left as a do-it-yourself recipe by the official SDK or locked inside a single provider: health-aware multi-RPC failover, a correct transaction send/confirm state machine, simulate-based fee/CU estimation, Jito/MEV routing with automatic RPC fallback, and standardized OpenTelemetry/Datadog telemetry — behind one clean API that works on top of any set of providers.
 
 > **🔬 Live demo: [solana-rpc-sdk.pages.dev](https://solana-rpc-sdk.pages.dev)** — the *RPC Resilience Lab* runs the real SDK in your browser: inject faults against the simulation harness, flip the kit on/off to compare landing rates, or connect a wallet and land a real transaction on devnet. ([source](./demo))
