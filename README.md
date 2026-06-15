@@ -2,7 +2,11 @@
 
 A vendor-neutral, **client-side resilience and observability layer for Solana dApps**, built on `@solana/kit` (web3.js v2). It unifies the reliability work that is today either left as a do-it-yourself recipe by the official SDK or locked inside a single provider: health-aware multi-RPC failover, a correct transaction send/confirm state machine, simulate-based fee/CU estimation, Jito/MEV routing with automatic RPC fallback, and standardized OpenTelemetry/Datadog telemetry — behind one clean API that works on top of any set of providers.
 
-> Built for the Superteam Ukraine bounty. The full problem analysis with sources is in [`01_PROBLEM_ANALYSIS.md`](./01_PROBLEM_ANALYSIS.md) (English) / [`01_PROBLEM_ANALYSIS_RU.md`](./01_PROBLEM_ANALYSIS_RU.md) (Russian).
+- **Vendor-neutral** — works with any RPC provider; no gateway, no proprietary key required.
+- **Correct by construction** — implements the send/confirm semantics most clients get wrong (no double-charge, bounded by `lastValidBlockHeight`).
+- **Built on `@solana/kit`** — the pool *is* a kit `RpcTransport`, so it drops into existing kit code.
+- **Deterministically tested** — an in-memory fault-injection cluster reproduces drops, expiry, 429s, desync, and MEV failures; 74 specs, coverage-gated.
+- **Observable** — first-class client telemetry to OpenTelemetry / Datadog.
 
 ## Problem
 
@@ -40,9 +44,9 @@ The decisive finding: every robust mitigation today is **either a DIY recipe in 
 | **OSS multi-RPC libs** | Thin failover wrappers | Narrow; none combine retry + confirmation + Jito + observability |
 | **OpenTelemetry / Datadog** | Generic JSON-RPC spans, OTLP ingest | **No Solana-specific client instrumentation exists** |
 
-**The white space:** a *vendor-neutral, client-side, systems-grade* layer that unifies all of the above behind one API on top of `@solana/kit` — which is exactly what this repo builds.
+**The white space:** a *vendor-neutral, client-side, systems-grade* layer that unifies all of the above behind one API on top of `@solana/kit` — which is exactly what this package provides.
 
-## What this repo does
+## Modules
 
 | Module | File | Responsibility |
 |---|---|---|
@@ -51,7 +55,7 @@ The decisive finding: every robust mitigation today is **either a DIY recipe in 
 | `CreditRateLimiter` | `src/rpc/rate-limit.ts` | Weighted-credit token bucket to pre-empt 429s |
 | `TransactionSender` | `src/tx/sender.ts` | Send/confirm state machine: `maxRetries:0`, bounded rebroadcast, **no re-sign** |
 | `ConfirmationTracker` | `src/tx/confirmation.ts` | Decides outcome by block height vs `lastValidBlockHeight`, never polls forever |
-| `FeeEstimator` + `NativeFeeOracle` | `src/fees/*` | Simulate-based CU sizing + pluggable percentile fee oracle |
+| `FeeEstimator` + `NativeFeeOracle` / `HeliusFeeOracle` | `src/fees/*` | Simulate-based CU sizing + pluggable percentile fee oracle (native or Helius) |
 | `JitoRouter` + `TipEstimator` | `src/jito/*` | Bundle routing, dynamic tips, automatic RPC fallback |
 | `OtelMetrics` / `InMemoryMetrics` | `src/observability/metrics.ts` | Client telemetry (latency, failures, slot lag, landings) → OTel/Datadog |
 | `ResilientWalletAdapter` | `src/wallet/adapter.ts` | Wallet-signed transactions through the resilient pipeline |
@@ -82,11 +86,15 @@ flowchart LR
 
 The pool exposes a real `@solana/kit` `RpcTransport`, so callers build a normal kit RPC with `pool.rpc()` and use it like any other — failover, freshness routing, and metrics happen underneath. The Jito path runs in parallel and **always falls back** to the resilient sender when a bundle does not land.
 
-## Quickstart
+## Install
 
 ```bash
 npm install solana-resilience-kit @solana/kit
 ```
+
+Requires Node ≥ 20. The package is ESM-only and ships compiled JS with type declarations. `@solana/kit` is a peer of your app and is used directly in the API surface.
+
+## Quickstart
 
 Build a failover pool from two RPC endpoints and use it as a normal kit RPC:
 
@@ -118,8 +126,38 @@ const result = await sender.sendAndConfirm({
 
 // result.outcome is "confirmed" or "expired" — decided by block height,
 // not a timeout. The sender uses maxRetries:0, rebroadcasts the *same*
-// signed bytes, and never re-signs (so it can never double-charge).
+// signed bytes, never re-signs (so it can never double-charge), and treats a
+// resend error on an already-landed tx as non-terminal.
 ```
+
+## Testing your own code against the fault harness
+
+The deterministic Solana cluster simulator the SDK is tested with is shipped as a
+secondary entry point, so you can drive *your* code through the same injected
+faults (drops, expiry, 429s, slot lag) — no network, fully reproducible:
+
+```ts
+import { MockCluster, MockEndpoint } from "solana-resilience-kit/testing";
+import { createSolanaRpcFromTransport } from "@solana/kit";
+
+const cluster = new MockCluster({ initialBlockHeight: 700n });
+const endpoint = new MockEndpoint(cluster, { name: "sim" });
+endpoint.faults = { dropRate: 1 };               // silently drop every send
+const rpc = createSolanaRpcFromTransport(endpoint.transport);
+
+// ...exercise your sender; advance time deterministically:
+cluster.advanceSlots(160);                        // push past lastValidBlockHeight
+```
+
+## Interactive demo
+
+[`demo/`](./demo) — **RPC Resilience Lab**, a backend-free Vite + React app that runs the *real* SDK in your browser. In **simulation** mode it drives the fault harness (inject drops / 429s / lag / Jito failure and flip the SDK on/off to compare landing rates against a naive client); in **devnet** mode it connects a standard wallet (`@solana/wallet-adapter`), signs a real transfer, and lands it through the SDK with an explorer link.
+
+```bash
+cd demo && npm install && npm run dev
+```
+
+A headless Node example is in [`examples/devnet-demo.ts`](./examples/devnet-demo.ts) (`npx tsx examples/devnet-demo.ts`).
 
 ## Testing & simulation
 
@@ -131,43 +169,38 @@ Solana's failure modes — silent drops, blockhash expiry, 429s, lagging-node de
 - **Injected `sleep`.** Time-based loops take a `sleep` dependency; tests pass one that advances the mock clock, so the whole state machine runs instantly and deterministically.
 
 ```bash
-npm test          # full suite (harness + all modules)
-npm run test:cov  # coverage with the 90% thresholds enforced
+npm test          # full suite (harness + all modules), 74 specs
+npm run test:cov  # coverage with the thresholds enforced
 npm run typecheck # tsc --noEmit
 ```
 
-Coverage thresholds (`vitest.config.ts`) are **lines 90 / functions 90 / branches 85 / statements 90**, and the suite passes them — the fault-injection harness is both the path to coverage and the evidence behind the correctness/resilience claims. A fully reproducible Docker environment is available via `make verify` / `make test` (see [§6 of the build playbook](./CLAUDE_CODE_BUILD_PLAYBOOK.md)).
+Coverage thresholds (`vitest.config.ts`) are **lines 90 / functions 90 / branches 85 / statements 90**, and the suite passes them. A fully reproducible Docker environment is available via the [`Makefile`](./Makefile):
 
-## Mapping to the bounty
+```bash
+make verify   # typecheck + always-green harness/metrics tests, in Docker
+make test     # typecheck + full suite, in Docker
+make cov      # coverage report (writes ./coverage)
+```
 
-| Submission item | Implemented in | Covered by |
-|---|---|---|
-| web3.js v2.0 / kit compatibility | every module builds on kit's `RpcTransport` | `test/harness/harness.test.ts` (real kit signing) |
-| Wallet adapter integration | `ResilientWalletAdapter` | `test/wallet/adapter.test.ts` |
-| MEV routing + automatic RPC fallback | `JitoRouter` / `TipEstimator` | `test/jito/router.test.ts`, `test/jito/tips.test.ts` |
-| Dynamic fee / CU estimation | `FeeEstimator` / `NativeFeeOracle` | `test/fees/estimator.test.ts` |
-| Traffic distribution across healthy nodes | `ResilientRpcPool` / `HealthMonitor` / `CreditRateLimiter` | `test/rpc/{pool,health,rate-limit}.test.ts` |
-| Correct send/confirm (no double-charge) | `TransactionSender` / `ConfirmationTracker` | `test/tx/{sender,confirmation}.test.ts` |
-| Export metrics to OpenTelemetry / Datadog | `OtelMetrics` | `test/observability/otel.test.ts` |
-| Diagnostics CLI | `Diagnostics` (`src/cli/diagnose.ts`) | `test/cli/diagnose.test.ts` |
-| 90%+ coverage via network-fault simulation | fault-injection harness (`test/harness`) | enforced in `vitest.config.ts` |
+## Building from source
 
-## Status
+```bash
+npm run build   # emit dist/ — compiled JS + .d.ts for `.` and `./testing`
+```
 
-| Layer | State |
-|---|---|
-| Simulation harness (`test/harness`) | ✅ implemented + self-tested |
-| RPC layer (pool, health, rate limit) | ✅ implemented + tested |
-| Transaction layer (sender, confirmation) | ✅ implemented + tested |
-| Fees (estimator, native oracle) | ✅ implemented + tested |
-| Jito (router, tip estimator) | ✅ implemented + tested |
-| Observability (OTel exporter) | ✅ implemented + tested |
-| Wallet adapter | ✅ implemented + tested |
-| Diagnostics CLI core | ✅ implemented + tested |
-| Coverage gate (90%) | ✅ passing |
-| Live devnet example | ⏳ planned (`examples/devnet-demo.ts`) |
-| `HeliusFeeOracle` HTTP oracle | ⏳ interface in place, implementation pending |
+The published package contains only `dist/`, `README.md`, and `LICENSE`. `prepublishOnly` re-runs typecheck + tests + build before any publish.
+
+## Project layout
+
+```
+src/        public API — the SDK modules
+test/       behavioral specs + test/harness/ (the simulation cluster)
+demo/       RPC Resilience Lab (Vite + React browser app)
+examples/   headless devnet example
+```
 
 ## License
 
-MIT
+[MIT](./LICENSE)
+</content>
+</invoke>
