@@ -42,3 +42,13 @@ export type { Metrics, OtelMetricsConfig } from "./observability/metrics.js";
 // Wallet
 export { ResilientWalletAdapter } from "./wallet/adapter.js";
 export type { WalletSigner, ResilientWalletConfig } from "./wallet/adapter.js";
+
+// Diagnostics
+export { Diagnostics } from "./cli/diagnose.js";
+export type {
+  ProbeTarget,
+  EndpointProbe,
+  ProbeReport,
+  TxDiagnosis,
+  DiagnosticsDeps,
+} from "./cli/diagnose.js";
