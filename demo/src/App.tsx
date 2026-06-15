@@ -118,6 +118,20 @@ export function App() {
   );
 }
 
+function Clock({ slot }: { slot: number }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    <span className="clock mono">
+      slot <b>{slot.toLocaleString()}</b> · {pad(now.getHours())}:{pad(now.getMinutes())}:{pad(now.getSeconds())}
+    </span>
+  );
+}
+
 function ControlDeck({ lab, state }: { lab: Lab; state: LabState }) {
   const busy = state.running;
   return (
