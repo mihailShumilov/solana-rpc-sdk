@@ -6,7 +6,8 @@
  * signals, and `OtelMetrics` (to be implemented) bridges to OpenTelemetry /
  * Datadog via the OTLP exporter.
  */
-import { NotImplementedError } from "../errors.js";
+import { metrics } from "@opentelemetry/api";
+import type { Counter, Gauge, Histogram, Meter } from "@opentelemetry/api";
 
 export interface Metrics {
   /** Per-endpoint request latency (ms) with success/failure outcome. */
@@ -56,24 +57,44 @@ export interface OtelMetricsConfig {
   serviceName?: string;
   /** OTLP endpoint, e.g. a Datadog Agent or OTel Collector. */
   otlpEndpoint?: string;
+  /** Inject a Meter for tests; defaults to the global OTel meter. */
+  meter?: Meter;
 }
 
-/** OpenTelemetry/Datadog-backed metrics. Implementation phase. */
+/** OpenTelemetry/Datadog-backed metrics. Bridges {@link Metrics} to OTel instruments. */
 export class OtelMetrics implements Metrics {
-  constructor(_config?: OtelMetricsConfig) {}
-  recordRequest(): void {
-    throw new NotImplementedError("OtelMetrics.recordRequest");
+  private readonly latency: Histogram;
+  private readonly failures: Counter;
+  private readonly rateLimited: Counter;
+  private readonly rebroadcasts: Counter;
+  private readonly landings: Counter;
+  private readonly slot: Gauge;
+
+  constructor(config?: OtelMetricsConfig) {
+    const meter = config?.meter ?? metrics.getMeter(config?.serviceName ?? "solana-resilience-kit");
+    this.latency = meter.createHistogram("rpc.request.latency_ms");
+    this.failures = meter.createCounter("rpc.request.failures");
+    this.rateLimited = meter.createCounter("rpc.rate_limited");
+    this.rebroadcasts = meter.createCounter("tx.rebroadcasts");
+    this.landings = meter.createCounter("tx.landings");
+    this.slot = meter.createGauge("rpc.endpoint.slot");
   }
-  recordRateLimited(): void {
-    throw new NotImplementedError("OtelMetrics.recordRateLimited");
+
+  recordRequest(endpoint: string, method: string, latencyMs: number, ok: boolean): void {
+    this.latency.record(latencyMs, { endpoint, method, ok });
+    if (!ok) this.failures.add(1, { endpoint, method });
   }
-  recordRebroadcast(): void {
-    throw new NotImplementedError("OtelMetrics.recordRebroadcast");
+  recordRateLimited(endpoint: string): void {
+    this.rateLimited.add(1, { endpoint });
   }
-  recordLanding(): void {
-    throw new NotImplementedError("OtelMetrics.recordLanding");
+  recordRebroadcast(signature: string): void {
+    this.rebroadcasts.add(1, { signature });
   }
-  recordSlot(): void {
-    throw new NotImplementedError("OtelMetrics.recordSlot");
+  recordLanding(signature: string, outcome: "confirmed" | "expired", slots: number): void {
+    this.landings.add(1, { signature, outcome, slots });
+  }
+  recordSlot(endpoint: string, slot: bigint): void {
+    // Slots are well within Number.MAX_SAFE_INTEGER; gauges take numbers.
+    this.slot.record(Number(slot), { endpoint });
   }
 }
