@@ -3,6 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/solana-resilience-kit.svg)](https://www.npmjs.com/package/solana-resilience-kit)
 [![npm downloads](https://img.shields.io/npm/dm/solana-resilience-kit.svg)](https://www.npmjs.com/package/solana-resilience-kit)
 [![types included](https://img.shields.io/npm/types/solana-resilience-kit.svg)](https://www.npmjs.com/package/solana-resilience-kit)
+[![coverage ≥90% (CI-enforced)](https://img.shields.io/badge/coverage-%E2%89%A590%25%20CI--gated-brightgreen)](./.github/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/npm/l/solana-resilience-kit.svg)](./LICENSE)
 
 A vendor-neutral, **client-side resilience and observability layer for Solana dApps**, built on `@solana/kit` (web3.js v2). It unifies the reliability work that is today either left as a do-it-yourself recipe by the official SDK or locked inside a single provider: health-aware multi-RPC failover, a correct transaction send/confirm state machine, simulate-based fee/CU estimation, Jito/MEV routing with automatic RPC fallback, and standardized OpenTelemetry/Datadog telemetry — behind one clean API that works on top of any set of providers.
@@ -239,7 +240,7 @@ npm run test:cov  # coverage with the thresholds enforced
 npm run typecheck # tsc --noEmit
 ```
 
-Coverage thresholds (`vitest.config.ts`) are **lines 90 / functions 90 / branches 85 / statements 90**, and the suite passes them. A fully reproducible Docker environment is available via the [`Makefile`](./Makefile):
+Coverage thresholds (`vitest.config.ts`) are **lines 90 / functions 90 / branches 85 / statements 90**, and the suite passes them. **CI enforces this gate on every push and PR** — the `docker compose run --rm cov` step in [`ci.yml`](./.github/workflows/ci.yml) runs `npm run test:cov`, which exits non-zero (failing the build) if coverage drops below those thresholds. A fully reproducible Docker environment is available via the [`Makefile`](./Makefile):
 
 ```bash
 make verify   # typecheck + always-green harness/metrics tests, in Docker

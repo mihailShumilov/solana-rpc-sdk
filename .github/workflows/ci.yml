@@ -7,6 +7,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose build
       - run: docker compose run --rm test
+      # Enforce the coverage gate: test:cov exits non-zero if coverage falls
+      # below the thresholds in vitest.config.ts (lines/functions 90, branches 85).
+      - run: docker compose run --rm cov
 
   publish:
     # Publishes to npm via OIDC "trusted publishing" — no token, no OTP.
