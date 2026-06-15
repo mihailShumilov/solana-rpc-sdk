@@ -48,6 +48,7 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json && tsc -p tsconfig.build.testing.json",
+    "build:demo": "npm --prefix demo ci && npm --prefix demo run build",
     "clean": "rm -rf dist",
     "test": "vitest run",
     "test:watch": "vitest",
