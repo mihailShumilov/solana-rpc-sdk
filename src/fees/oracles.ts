@@ -4,7 +4,7 @@
  * Helius/QuickNode oracles call account-aware percentile APIs. Vendor neutrality
  * means the SDK works with any of them behind one interface.
  */
-import type { Rpc, SolanaRpcApi } from "@solana/kit";
+import type { Address, Rpc, SolanaRpcApi } from "@solana/kit";
 import { NotImplementedError } from "../errors.js";
 
 export type FeeLevel = "min" | "low" | "medium" | "high" | "veryHigh";
@@ -21,9 +21,51 @@ export interface FeeOracle {
 
 /** Native estimate from getRecentPrioritizationFees over recent slots. */
 export class NativeFeeOracle implements FeeOracle {
-  constructor(_rpc: Rpc<SolanaRpcApi>) {}
-  getPriorityFee(_writableAccounts: string[]): Promise<PriorityFeeEstimate> {
-    throw new NotImplementedError("NativeFeeOracle.getPriorityFee");
+  private readonly rpc: Rpc<SolanaRpcApi>;
+
+  constructor(rpc: Rpc<SolanaRpcApi>) {
+    this.rpc = rpc;
+  }
+
+  /**
+   * Derives micro-lamports-per-CU percentiles from the cluster's recent
+   * prioritization-fee samples (`getRecentPrioritizationFees`). This is the
+   * free, backward-looking source: the node returns the smallest fee paid by a
+   * landed tx per recent slot. We sort the samples and pick percentiles by
+   * nearest-rank so the levels are monotonic.
+   */
+  async getPriorityFee(writableAccounts: string[]): Promise<PriorityFeeEstimate> {
+    const recent = await this.rpc
+      .getRecentPrioritizationFees(writableAccounts as unknown as readonly Address[])
+      .send();
+
+    // Samples may arrive as bigint (kit MicroLamports) or number; normalize and
+    // sort ascending so percentile-by-rank produces monotonic levels.
+    const sorted = recent
+      .map((entry) => Number(entry.prioritizationFee))
+      .sort((a, b) => a - b);
+
+    if (sorted.length === 0) {
+      return {
+        levels: { min: 0, low: 0, medium: 0, high: 0, veryHigh: 0 },
+      };
+    }
+
+    // Nearest-rank percentile over (n - 1): p=0 -> first, p=100 -> last. The
+    // computed index is always in [0, n-1]; the `?? 0` only satisfies
+    // noUncheckedIndexedAccess and is never reached for a non-empty array.
+    const percentile = (p: number): number =>
+      sorted[Math.round((p / 100) * (sorted.length - 1))] ?? 0;
+
+    return {
+      levels: {
+        min: percentile(0),
+        low: percentile(25),
+        medium: percentile(50),
+        high: percentile(75),
+        veryHigh: percentile(100),
+      },
+    };
   }
 }
 
