@@ -100,7 +100,7 @@ The pool exposes a real `@solana/kit` `RpcTransport`, so callers build a normal 
 npm install solana-resilience-kit @solana/kit
 ```
 
-Requires Node ≥ 20. The package is ESM-only and ships compiled JS with type declarations. `@solana/kit` is a peer of your app and is used directly in the API surface.
+Requires Node ≥ 20. The package is ESM-only and ships compiled JS with type declarations. **`@solana/kit` is a required peer dependency** (`^6.9.0`): install it alongside so your app and the SDK resolve to a *single* kit instance — this keeps kit's branded types (`Address`, `Signature`, `Base64EncodedWireTransaction`, …) compatible across the boundary. `@opentelemetry/api` is an **optional** peer, needed only if you use `OtelMetrics` (and is already pulled in transitively by the OpenTelemetry SDK packages — see [Wiring observability to OpenTelemetry / Datadog](#wiring-observability-to-opentelemetry--datadog)).
 
 ## Quickstart
 
