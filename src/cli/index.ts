@@ -20,6 +20,7 @@
  */
 import { createSolanaRpc } from "@solana/kit";
 import type { Rpc, SolanaRpcApi } from "@solana/kit";
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { SdkError } from "../errors.js";
 import { Diagnostics } from "./diagnose.js";
@@ -259,8 +260,11 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
 }
 
 /* v8 ignore start -- process bootstrap; only runs when invoked as the binary */
+// Resolve symlinks: npm installs the bin as a symlink in node_modules/.bin, so
+// process.argv[1] is that link while import.meta.url is the real dist file —
+// comparing realpaths is what makes the binary fire when run by name.
 const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+if (entry !== undefined && import.meta.url === pathToFileURL(realpathSync(entry)).href) {
   run(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;

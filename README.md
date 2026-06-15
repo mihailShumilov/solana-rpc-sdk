@@ -143,13 +143,14 @@ The package ships an executable, `solana-resilience-diagnose`, built on the same
 `Diagnostics` core (`src/cli/diagnose.ts`). It answers the two questions an
 operator asks when a Solana dApp misbehaves — *which of my providers is healthy
 and freshest?* and *did this transaction land, expire, or is it still pending?* —
-without writing any code. Run it with `npx` (no install) or from a dependency's
-`node_modules/.bin`:
+without writing any code. Run it zero-install with `npx`, or — once the package
+is a dependency — call `solana-resilience-diagnose` directly (it is on your
+`node_modules/.bin`):
 
 ```bash
 # Probe provider health across one or more endpoints (reuses the pool's own
 # slot-freshness ranking, so "freshest" matches what routing would pick):
-npx solana-resilience-diagnose probe \
+npx -p solana-resilience-kit solana-resilience-diagnose probe \
   --rpc https://api.mainnet-beta.solana.com \
   --rpc https://my-backup.rpc
 ```
@@ -167,7 +168,7 @@ Freshest: https://api.mainnet-beta.solana.com  ·  1/2 healthy.
 # Explain a transaction's outcome point-in-time (no polling loop): it compares
 # the current signature status and block height against lastValidBlockHeight —
 # the canonical Solana rule — and never re-signs.
-npx solana-resilience-diagnose explain \
+npx -p solana-resilience-kit solana-resilience-diagnose explain \
   --rpc https://api.mainnet-beta.solana.com \
   --sig 5xRe...your-signature \
   --lvbh 287654321
