@@ -11,15 +11,17 @@
  *      never re-signs — so it can never double-charge).
  *   7. Explain the final outcome via Diagnostics.explainTransaction.
  *
- * Run from the repo root:
- *   npm i -D tsx                  # one-time: a TypeScript runner
- *   npm i @solana-program/system  # the SOL-transfer instruction builder
+ * Run from the repo root (tsx + @solana-program/system are already devDeps):
+ *   npm install
  *   npx tsx examples/devnet-demo.ts
  *
  * Devnet only. By default it generates a throwaway keypair and funds it from the
- * faucet; if the faucet is rate-limited, export SOLANA_SECRET_KEY as a JSON array
- * of the 64 secret-key bytes of a pre-funded devnet keypair. Set DEVNET_RPC_2 to
- * a second provider's URL to see real cross-provider failover / freshness routing.
+ * public faucet — but that faucet is aggressively rate-limited (often 1 airdrop
+ * per IP per day), so for a reliable run export SOLANA_SECRET_KEY as a JSON array
+ * of the 64 secret-key bytes of a pre-funded devnet keypair:
+ *   SOLANA_SECRET_KEY='[12,34,...]' npx tsx examples/devnet-demo.ts
+ * Set DEVNET_RPC_2 to a second provider's URL to see real cross-provider
+ * failover / freshness routing.
  */
 import {
   airdropFactory,
