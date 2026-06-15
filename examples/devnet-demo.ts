@@ -4,7 +4,7 @@
  *
  *   1. Build a ResilientRpcPool over two devnet RPC endpoints (failover + health).
  *   2. Probe provider health via Diagnostics.probeEndpoints.
- *   3. Get (or generate + airdrop) a devnet keypair.
+ *   3. Load a persisted devnet keypair (or generate + save one), and fund it.
  *   4. Build and sign a 0.001 SOL self-transfer with @solana/kit.
  *   5. Size the priority fee / CU via FeeEstimator (simulate + percentile oracle).
  *   6. Land it through TransactionSender (maxRetries:0, bounded rebroadcast,
@@ -15,14 +15,16 @@
  *   npm install
  *   npx tsx examples/devnet-demo.ts
  *
- * Devnet only. By default it generates a throwaway keypair and funds it from the
- * public faucet — but that faucet is aggressively rate-limited (often 1 airdrop
- * per IP per day), so for a reliable run export SOLANA_SECRET_KEY as a JSON array
- * of the 64 secret-key bytes of a pre-funded devnet keypair:
- *   SOLANA_SECRET_KEY='[12,34,...]' npx tsx examples/devnet-demo.ts
- * Set DEVNET_RPC_2 to a second provider's URL to see real cross-provider
- * failover / freshness routing.
+ * Devnet only. On first run it generates a keypair, saves it to the gitignored
+ * `.devnet-keypair.json`, and tries the public faucet. That faucet is aggressively
+ * rate-limited (often 1 airdrop per IP per day), so if it fails the script prints
+ * the address and exits — fund that address by any means, then re-run and it
+ * reuses the saved keypair and lands the transaction. You can also point it at a
+ * specific key with SOLANA_SECRET_KEY (a JSON array of the 64 secret-key bytes),
+ * or set DEVNET_RPC_2 to a second provider's URL to see cross-provider failover.
  */
+import { generateKeyPairSync } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   airdropFactory,
   appendTransactionMessageInstruction,
@@ -32,7 +34,6 @@ import {
   createSolanaRpcSubscriptions,
   createTransactionMessage,
   devnet,
-  generateKeyPairSigner,
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
   lamports,
@@ -41,6 +42,8 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
   type KeyPairSigner,
+  type Rpc,
+  type SolanaRpcApi,
 } from "@solana/kit";
 import { getTransferSolInstruction } from "@solana-program/system";
 
@@ -55,31 +58,75 @@ import {
 const DEVNET_HTTP = "https://api.devnet.solana.com";
 const DEVNET_WS = "wss://api.devnet.solana.com";
 const DEVNET_HTTP_2 = process.env.DEVNET_RPC_2 ?? DEVNET_HTTP;
+const KEYPAIR_FILE = ".devnet-keypair.json";
 
 /** JSON.stringify replacer that renders bigints (slots, block heights) as strings. */
 const bigintReplacer = (_k: string, v: unknown) => (typeof v === "bigint" ? v.toString() : v);
 
+/**
+ * Generate a fresh Ed25519 keypair as the 64-byte Solana secret key (32-byte
+ * seed || 32-byte public key) — the same layout `solana-keygen` writes and that
+ * `createKeyPairSignerFromBytes` expects. WebCrypto keys from kit are
+ * non-extractable, so we mint one via Node crypto to get persistable bytes.
+ */
+function freshSecretKeyBytes(): Uint8Array {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pkcs8 = privateKey.export({ format: "der", type: "pkcs8" });
+  const spki = publicKey.export({ format: "der", type: "spki" });
+  const seed = pkcs8.subarray(pkcs8.length - 32); // Ed25519 PKCS8: seed is the last 32 bytes
+  const pub = spki.subarray(spki.length - 32); // SPKI: raw public key is the last 32 bytes
+  return Uint8Array.from([...seed, ...pub]);
+}
+
+/** env SOLANA_SECRET_KEY > persisted .devnet-keypair.json > freshly generated + saved. */
 async function loadOrCreateSigner(): Promise<KeyPairSigner> {
   const fromEnv = process.env.SOLANA_SECRET_KEY;
   if (fromEnv) {
-    const bytes = Uint8Array.from(JSON.parse(fromEnv) as number[]);
-    const signer = await createKeyPairSignerFromBytes(bytes);
+    const signer = await createKeyPairSignerFromBytes(Uint8Array.from(JSON.parse(fromEnv) as number[]));
     console.log("using SOLANA_SECRET_KEY signer:", signer.address);
     return signer;
   }
-
-  const signer = await generateKeyPairSigner();
-  console.log("generated throwaway signer:", signer.address, "— requesting devnet airdrop…");
-  const airdrop = airdropFactory({
-    rpc: createSolanaRpc(devnet(DEVNET_HTTP)),
-    rpcSubscriptions: createSolanaRpcSubscriptions(devnet(DEVNET_WS)),
-  });
-  await airdrop({
-    recipientAddress: signer.address,
-    lamports: lamports(1_000_000_000n), // 1 SOL
-    commitment: "confirmed",
-  });
+  if (existsSync(KEYPAIR_FILE)) {
+    const bytes = Uint8Array.from(JSON.parse(readFileSync(KEYPAIR_FILE, "utf8")) as number[]);
+    const signer = await createKeyPairSignerFromBytes(bytes);
+    console.log("loaded persisted signer:", signer.address);
+    return signer;
+  }
+  const bytes = freshSecretKeyBytes();
+  const signer = await createKeyPairSignerFromBytes(bytes);
+  writeFileSync(KEYPAIR_FILE, JSON.stringify(Array.from(bytes)));
+  console.log("generated + saved signer:", signer.address, `(→ ${KEYPAIR_FILE})`);
   return signer;
+}
+
+/**
+ * Ensure the fee payer holds lamports. Tries the public faucet when empty; if
+ * that fails (commonly rate-limited), prints the address to fund manually and
+ * returns false so the caller can exit gracefully. Returns true once funded.
+ */
+async function ensureFunded(rpc: Rpc<SolanaRpcApi>, signer: KeyPairSigner): Promise<boolean> {
+  const { value: balance } = await rpc.getBalance(signer.address).send();
+  if (balance > 0n) {
+    console.log(`balance: ${Number(balance) / 1e9} SOL — funded`);
+    return true;
+  }
+  console.log("balance: 0 — requesting devnet airdrop…");
+  try {
+    const airdrop = airdropFactory({
+      rpc: createSolanaRpc(devnet(DEVNET_HTTP)),
+      rpcSubscriptions: createSolanaRpcSubscriptions(devnet(DEVNET_WS)),
+    });
+    await airdrop({
+      recipientAddress: signer.address,
+      lamports: lamports(1_000_000_000n), // 1 SOL
+      commitment: "confirmed",
+    });
+    return true;
+  } catch (err) {
+    console.warn("airdrop failed (the public faucet is often rate-limited):", String((err as Error)?.message ?? err));
+    console.warn(`→ fund ${signer.address} on devnet by any means, then re-run this script.`);
+    return false;
+  }
 }
 
 async function main(): Promise<void> {
@@ -100,8 +147,9 @@ async function main(): Promise<void> {
   ]);
   console.log("health probe:", JSON.stringify(probe, bigintReplacer, 2));
 
-  // 3. Wallet.
+  // 3. Wallet — load/persist a keypair and make sure it is funded.
   const signer = await loadOrCreateSigner();
+  if (!(await ensureFunded(rpc, signer))) return;
 
   // 4. Build + sign a 0.001 SOL self-transfer.
   const { value: latestBlockhash } = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
@@ -153,11 +201,6 @@ async function main(): Promise<void> {
       : `⚠️ outcome=${result.outcome} — see diagnosis above`,
   );
 }
-
-main().catch((err) => {
-  console.error("devnet demo failed:", err);
-  process.exitCode = 1;
-});
 
 main().catch((err) => {
   console.error("devnet demo failed:", err);

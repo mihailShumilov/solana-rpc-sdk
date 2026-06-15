@@ -6,3 +6,4 @@ coverage/
 .env
 .env.*
 .idea/
+.devnet-keypair.json
