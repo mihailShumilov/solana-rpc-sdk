@@ -11,11 +11,40 @@
  * compatibility guarantee plus DX win.
  */
 import type { RpcTransport } from "@solana/rpc-spec";
-import type { Rpc, SolanaRpcApi } from "@solana/kit";
-import { NotImplementedError } from "../errors.js";
-import type { HealthMonitor } from "./health.js";
+import { createSolanaRpcFromTransport, type Rpc, type SolanaRpcApi } from "@solana/kit";
+import { AllEndpointsFailedError } from "../errors.js";
+import { HealthMonitor, type EndpointHealth } from "./health.js";
 import type { CreditRateLimiter } from "./rate-limit.js";
 import type { Metrics } from "../observability/metrics.js";
+
+/** Minimal shape of the JSON-RPC payload a kit transport receives. */
+interface JsonRpcPayload {
+  jsonrpc: "2.0";
+  id: number | string;
+  method: string;
+  params?: unknown[];
+}
+
+/** Minimal shape of a JSON-RPC response a transport returns. */
+interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  id: number | string;
+  result: unknown;
+}
+
+/** True when an error is an HTTP 429 (rate-limit) carrying a numeric statusCode. */
+function isRateLimited(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === "object" &&
+    (err as { statusCode?: unknown }).statusCode === 429
+  );
+}
+
+/** Defensively read a bigint slot off a getSlot response (result is the slot). */
+function slotFromResponse(response: JsonRpcResponse): bigint | undefined {
+  return typeof response.result === "bigint" ? response.result : undefined;
+}
 
 export interface ResilientEndpoint {
   name: string;
@@ -39,20 +68,125 @@ export interface ResilientRpcConfig {
 }
 
 export class ResilientRpcPool {
-  constructor(_config: ResilientRpcConfig) {}
+  private readonly endpoints: ResilientEndpoint[];
+  private readonly endpointNames: string[];
+  private readonly byName: Map<string, ResilientEndpoint>;
+  private readonly healthMonitor: HealthMonitor;
+  private readonly rateLimiter?: CreditRateLimiter;
+  private readonly metrics?: Metrics;
+  private readonly freshnessAware: boolean;
+  private readonly maxAttempts: number;
+
+  constructor(config: ResilientRpcConfig) {
+    this.endpoints = config.endpoints;
+    this.endpointNames = config.endpoints.map((e) => e.name);
+    this.byName = new Map(config.endpoints.map((e) => [e.name, e]));
+    this.healthMonitor =
+      config.healthMonitor ??
+      new HealthMonitor({ endpointNames: this.endpointNames, maxSlotLag: 150n });
+    this.rateLimiter = config.rateLimiter;
+    this.metrics = config.metrics;
+    this.freshnessAware = config.freshnessAware ?? true;
+    this.maxAttempts = config.maxAttempts ?? config.endpoints.length;
+  }
 
   /** The failover transport. Plug into `createSolanaRpcFromTransport`. */
   get transport(): RpcTransport {
-    throw new NotImplementedError("ResilientRpcPool.transport");
+    const transport = async <TResponse>(config: {
+      payload: unknown;
+      signal?: AbortSignal;
+    }): Promise<TResponse> => {
+      const payload = config.payload as JsonRpcPayload;
+      const method = payload.method;
+
+      const order = await this.attemptOrder();
+
+      const attempts: Array<{ endpoint: string; error: unknown }> = [];
+      let used = 0;
+
+      for (const name of order) {
+        if (used >= this.maxAttempts) break;
+        const endpoint = this.byName.get(name);
+        if (endpoint === undefined) continue;
+        used += 1;
+
+        // Optional credit gating: a dry bucket is a soft failure — advance on.
+        if (this.rateLimiter !== undefined && !this.rateLimiter.tryAcquire(method)) {
+          attempts.push({ endpoint: name, error: new Error("rate limiter: no credits") });
+          continue;
+        }
+
+        // Date.now() here is a metric value, not loop control — acceptable.
+        const start = Date.now();
+        try {
+          const response = (await endpoint.transport(config)) as JsonRpcResponse;
+          const latencyMs = Date.now() - start;
+          const slot = method === "getSlot" ? slotFromResponse(response) : undefined;
+          this.healthMonitor.recordSuccess(name, latencyMs, slot);
+          if (slot !== undefined) this.metrics?.recordSlot(name, slot);
+          this.metrics?.recordRequest(name, method, latencyMs, true);
+          return response as unknown as TResponse;
+        } catch (err) {
+          const latencyMs = Date.now() - start;
+          if (isRateLimited(err)) this.metrics?.recordRateLimited(name);
+          this.healthMonitor.recordFailure(name, err);
+          this.metrics?.recordRequest(name, method, latencyMs, false);
+          attempts.push({ endpoint: name, error: err });
+        }
+      }
+
+      throw new AllEndpointsFailedError(attempts);
+    };
+
+    return transport as RpcTransport;
   }
 
   /** A ready-to-use kit RPC backed by the resilient transport. */
   rpc(): Rpc<SolanaRpcApi> {
-    throw new NotImplementedError("ResilientRpcPool.rpc");
+    return createSolanaRpcFromTransport(this.transport);
   }
 
   /** Current per-endpoint health snapshot (for monitoring / CLI). */
-  health() {
-    throw new NotImplementedError("ResilientRpcPool.health");
+  health(): EndpointHealth[] {
+    return this.healthMonitor.snapshot();
+  }
+
+  /**
+   * Builds the per-request attempt order. When freshness-aware, probe every
+   * endpoint's slot first so the HealthMonitor can rank fresh nodes ahead of
+   * laggards, then fall back to any configured endpoint not in the ranking
+   * (so unhealthy nodes stay as a last resort). Probe errors never escape.
+   *
+   * NOTE: this minimal form double-counts getSlot traffic (one probe + one
+   * serve per logical request). A real deployment would gate probing behind a
+   * refresh interval; the contract only requires correct routing here.
+   */
+  private async attemptOrder(): Promise<string[]> {
+    if (!this.freshnessAware) return this.endpointNames;
+
+    await Promise.all(this.endpoints.map((e) => this.probe(e)));
+
+    const ranked = this.healthMonitor.rankByFreshness();
+    if (ranked.length === 0) return this.endpointNames;
+
+    const seen = new Set(ranked);
+    const fallback = this.endpointNames.filter((n) => !seen.has(n));
+    return [...ranked, ...fallback];
+  }
+
+  /** Probe a single endpoint's getSlot, feeding health/metrics. Never throws. */
+  private async probe(endpoint: ResilientEndpoint): Promise<void> {
+    const probePayload: JsonRpcPayload = { jsonrpc: "2.0", id: 1, method: "getSlot", params: [] };
+    const start = Date.now();
+    try {
+      const response = (await endpoint.transport({ payload: probePayload })) as JsonRpcResponse;
+      const latencyMs = Date.now() - start;
+      const slot = slotFromResponse(response);
+      this.healthMonitor.recordSuccess(endpoint.name, latencyMs, slot);
+      if (slot !== undefined) this.metrics?.recordSlot(endpoint.name, slot);
+    } catch (err) {
+      // Swallow: a probe failure must never abort the real request path.
+      this.healthMonitor.recordFailure(endpoint.name, err);
+    }
   }
 }

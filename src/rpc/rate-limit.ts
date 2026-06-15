@@ -4,8 +4,6 @@
  * getProgramAccounts) many times a getBalance. Avoiding 429s requires modeling
  * that weighting client-side.
  */
-import { NotImplementedError } from "../errors.js";
-
 /** Default method weights, modeled on common provider credit tables. */
 export const DEFAULT_METHOD_WEIGHTS: Readonly<Record<string, number>> = {
   getBalance: 1,
@@ -32,20 +30,53 @@ export interface RateLimiterConfig {
 }
 
 export class CreditRateLimiter {
-  constructor(_config: RateLimiterConfig) {}
+  private readonly weights: Record<string, number>;
+  private readonly creditsPerWindow: number;
+  private readonly windowMs: number;
+  private readonly now: () => number;
+  private availableCredits: number;
+  private windowStart: number;
+
+  constructor(config: RateLimiterConfig) {
+    this.weights = { ...DEFAULT_METHOD_WEIGHTS, ...config.weights };
+    this.creditsPerWindow = config.creditsPerWindow;
+    this.windowMs = config.windowMs;
+    this.now = config.now ?? Date.now;
+    this.availableCredits = config.creditsPerWindow;
+    this.windowStart = this.now();
+  }
 
   /** Credit cost of a method under the configured weights. */
-  cost(_method: string): number {
-    throw new NotImplementedError("CreditRateLimiter.cost");
+  cost(method: string): number {
+    return this.weights[method] ?? 1;
+  }
+
+  /**
+   * Lazily replenishes the bucket: if a full window has elapsed since
+   * `windowStart`, reset credits and anchor a new window. No timers.
+   */
+  private refill(): void {
+    const elapsed = this.now() - this.windowStart;
+    if (elapsed >= this.windowMs) {
+      this.availableCredits = this.creditsPerWindow;
+      this.windowStart = this.now();
+    }
   }
 
   /** Attempts to spend credits for `method`; returns false if the bucket is dry. */
-  tryAcquire(_method: string): boolean {
-    throw new NotImplementedError("CreditRateLimiter.tryAcquire");
+  tryAcquire(method: string): boolean {
+    this.refill();
+    const c = this.cost(method);
+    if (this.availableCredits >= c) {
+      this.availableCredits -= c;
+      return true;
+    }
+    return false;
   }
 
   /** Credits currently available (after refill). */
   available(): number {
-    throw new NotImplementedError("CreditRateLimiter.available");
+    this.refill();
+    return this.availableCredits;
   }
 }
