@@ -12,7 +12,7 @@ A vendor-neutral, **client-side resilience and observability layer for Solana dA
 - **Vendor-neutral** — works with any RPC provider; no gateway, no proprietary key required.
 - **Correct by construction** — implements the send/confirm semantics most clients get wrong (no double-charge, bounded by `lastValidBlockHeight`).
 - **Built on `@solana/kit`** — the pool *is* a kit `RpcTransport`, so it drops into existing kit code.
-- **Deterministically tested** — an in-memory fault-injection cluster reproduces drops, expiry, 429s, desync, and MEV failures; 74 specs, coverage-gated.
+- **Deterministically tested** — an in-memory fault-injection cluster reproduces drops, expiry, 429s, desync, and MEV failures; 102 specs, coverage-gated.
 - **Observable** — first-class client telemetry to OpenTelemetry / Datadog.
 
 ## Problem
@@ -66,7 +66,7 @@ The decisive finding: every robust mitigation today is **either a DIY recipe in 
 | `JitoRouter` + `TipEstimator` | `src/jito/*` | Bundle routing, dynamic tips, automatic RPC fallback |
 | `OtelMetrics` / `InMemoryMetrics` | `src/observability/metrics.ts` | Client telemetry (latency, failures, slot lag, landings) → OTel/Datadog |
 | `ResilientWalletAdapter` | `src/wallet/adapter.ts` | Wallet-signed transactions through the resilient pipeline |
-| `Diagnostics` | `src/cli/diagnose.ts` | Probe provider health; explain why a transaction did or didn't land |
+| `Diagnostics` + `solana-resilience-diagnose` CLI | `src/cli/diagnose.ts`, `src/cli/index.ts` | Probe provider health; explain why a transaction did or didn't land (see [Diagnostics CLI](#diagnostics-cli)) |
 
 ## Architecture
 
@@ -137,6 +137,61 @@ const result = await sender.sendAndConfirm({
 // resend error on an already-landed tx as non-terminal.
 ```
 
+## Diagnostics CLI
+
+The package ships an executable, `solana-resilience-diagnose`, built on the same
+`Diagnostics` core (`src/cli/diagnose.ts`). It answers the two questions an
+operator asks when a Solana dApp misbehaves — *which of my providers is healthy
+and freshest?* and *did this transaction land, expire, or is it still pending?* —
+without writing any code. Run it with `npx` (no install) or from a dependency's
+`node_modules/.bin`:
+
+```bash
+# Probe provider health across one or more endpoints (reuses the pool's own
+# slot-freshness ranking, so "freshest" matches what routing would pick):
+npx solana-resilience-diagnose probe \
+  --rpc https://api.mainnet-beta.solana.com \
+  --rpc https://my-backup.rpc
+```
+
+```
+ENDPOINT                            HEALTH  SLOT       LATENCY  FRESHEST
+https://api.mainnet-beta.solana.com ok      287654812  142ms    *
+https://my-backup.rpc               down    -          19ms
+
+Freshest: https://api.mainnet-beta.solana.com  ·  1/2 healthy.
+  https://my-backup.rpc: fetch failed
+```
+
+```bash
+# Explain a transaction's outcome point-in-time (no polling loop): it compares
+# the current signature status and block height against lastValidBlockHeight —
+# the canonical Solana rule — and never re-signs.
+npx solana-resilience-diagnose explain \
+  --rpc https://api.mainnet-beta.solana.com \
+  --sig 5xRe...your-signature \
+  --lvbh 287654321
+```
+
+```
+Signature: 5xRe...your-signature
+Verdict: EXPIRED
+block height 287654400 exceeded lastValidBlockHeight 287654321; the blockhash
+expired before the transaction landed (silent drop or congestion). Rebuild with
+a fresh blockhash — do NOT re-sign the same one.
+```
+
+| Flag | Command | Meaning |
+|---|---|---|
+| `--rpc <url>` | both | RPC endpoint URL. Repeat for `probe`; exactly one for `explain`. Accepts `--rpc=<url>` too. |
+| `--sig <sig>` | `explain` | Transaction signature to explain. |
+| `--lvbh <n>` | `explain` | `lastValidBlockHeight` the transaction was built against. |
+
+**Exit codes:** `0` success · `1` a substantive failure (no healthy endpoint, or an
+expired transaction) · `2` a usage error. Run with no command, `help`, or
+`--help` to print usage. The argv parser is a pure, network-free function and is
+unit-tested in isolation (`test/cli/argv.test.ts`).
+
 ## Testing your own code against the fault harness
 
 The deterministic Solana cluster simulator the SDK is tested with is shipped as a
@@ -178,7 +233,7 @@ Solana's failure modes — silent drops, blockhash expiry, 429s, lagging-node de
 - **Injected `sleep`.** Time-based loops take a `sleep` dependency; tests pass one that advances the mock clock, so the whole state machine runs instantly and deterministically.
 
 ```bash
-npm test          # full suite (harness + all modules), 74 specs
+npm test          # full suite (harness + all modules), 102 specs
 npm run test:cov  # coverage with the thresholds enforced
 npm run typecheck # tsc --noEmit
 ```
