@@ -2,6 +2,8 @@
 
 A vendor-neutral, **client-side resilience and observability layer for Solana dApps**, built on `@solana/kit` (web3.js v2). It unifies the reliability work that is today either left as a do-it-yourself recipe by the official SDK or locked inside a single provider: health-aware multi-RPC failover, a correct transaction send/confirm state machine, simulate-based fee/CU estimation, Jito/MEV routing with automatic RPC fallback, and standardized OpenTelemetry/Datadog telemetry — behind one clean API that works on top of any set of providers.
 
+> **🔬 Live demo: [solana-rpc-sdk.pages.dev](https://solana-rpc-sdk.pages.dev)** — the *RPC Resilience Lab* runs the real SDK in your browser: inject faults against the simulation harness, flip the kit on/off to compare landing rates, or connect a wallet and land a real transaction on devnet. ([source](./demo))
+
 - **Vendor-neutral** — works with any RPC provider; no gateway, no proprietary key required.
 - **Correct by construction** — implements the send/confirm semantics most clients get wrong (no double-charge, bounded by `lastValidBlockHeight`).
 - **Built on `@solana/kit`** — the pool *is* a kit `RpcTransport`, so it drops into existing kit code.
@@ -151,7 +153,9 @@ cluster.advanceSlots(160);                        // push past lastValidBlockHei
 
 ## Interactive demo
 
-[`demo/`](./demo) — **RPC Resilience Lab**, a backend-free Vite + React app that runs the *real* SDK in your browser. In **simulation** mode it drives the fault harness (inject drops / 429s / lag / Jito failure and flip the SDK on/off to compare landing rates against a naive client); in **devnet** mode it connects a standard wallet (`@solana/wallet-adapter`), signs a real transfer, and lands it through the SDK with an explorer link.
+**Live at [solana-rpc-sdk.pages.dev](https://solana-rpc-sdk.pages.dev)** · source in [`demo/`](./demo)
+
+**RPC Resilience Lab** is a backend-free Vite + React app that runs the *real* SDK in your browser. In **simulation** mode it drives the fault harness (inject drops / 429s / lag / Jito failure and flip the SDK on/off to compare landing rates against a naive client); in **devnet** mode it connects a standard wallet (`@solana/wallet-adapter`), signs a real transfer, and lands it through the SDK with an explorer link.
 
 ```bash
 cd demo && npm install && npm run dev

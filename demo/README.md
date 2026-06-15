@@ -1,5 +1,7 @@
 # RPC Resilience Lab
 
+**Live: [solana-rpc-sdk.pages.dev](https://solana-rpc-sdk.pages.dev)**
+
 An interactive, **backend-free** browser app that runs the *real*
 `solana-resilience-kit` SDK against the *real* simulation harness. Inject faults
 into mock RPC endpoints and watch the SDK route, fail over, rebroadcast, and
