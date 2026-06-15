@@ -206,8 +206,20 @@ function ControlDeck({ lab, state }: { lab: Lab; state: LabState }) {
         <button className="btn-ghost mono" disabled={busy} onClick={() => lab.reset()}>
           reset
         </button>
-        <button className="btn-send" disabled={busy} onClick={() => void lab.send()}>
-          {busy ? "Sending…" : devnet ? "Send devnet tx" : state.sdkEnabled ? "Send transaction" : "Send (no SDK)"}
+        <button
+          className="btn-send"
+          disabled={busy || (devnet && !state.devnet.connected)}
+          onClick={() => void lab.send()}
+        >
+          {busy
+            ? "Sending…"
+            : devnet
+              ? state.devnet.connected
+                ? "Send devnet tx"
+                : "Connect wallet first"
+              : state.sdkEnabled
+                ? "Send transaction"
+                : "Send (no SDK)"}
         </button>
       </div>
     </div>
@@ -242,66 +254,65 @@ function ScenarioExplainer({ info, sdkEnabled }: { info: ScenarioInfo; sdkEnable
 }
 
 function DevnetPanel({ lab, dv }: { lab: Lab; dv: DevnetView }) {
-  const [text, setText] = useState("");
   return (
     <section className="card devnet-panel">
       <header>
         <h2>Devnet · real transactions</h2>
-        <span className="meta">{dv.hasKey ? "key loaded" : "no key"}</span>
+        <span className="meta">{dv.connected ? "wallet connected" : dv.available ? "phantom ready" : "no wallet"}</span>
       </header>
       <div className="card-body devnet-grid">
         <p className="warn-note">
-          ⚠ Devnet only — never paste a mainnet secret key. It is kept in this browser's localStorage and used to
-          sign a 0.0001 SOL self-transfer. Paste a 64-byte secret-key array (e.g. the repo's <code>.devnet-keypair.json</code>)
-          or generate one and fund it.
+          ⚠ Devnet only. Connect Phantom and approve a 0.0001 SOL transfer; the SDK lands it on devnet and links the
+          explorer. The recipient is fixed (below); flip <code>SDK</code> off to compare against a naive single broadcast.
         </p>
+
         <div className="kp-row">
-          <input
-            className="kp-input"
-            placeholder="[12, 34, … 64 bytes …]"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <button
-            className="btn-ghost mono"
-            onClick={() => {
-              void lab.setSecretKey(text);
-              setText("");
-            }}
-          >
-            load key
-          </button>
-          <button className="btn-ghost mono" onClick={() => void lab.generateKeypair()}>
-            generate
-          </button>
-          {dv.hasKey && (
-            <button className="btn-ghost mono" onClick={() => lab.clearKey()}>
-              clear
+          {dv.connected ? (
+            <>
+              <button className="btn-ghost mono" onClick={() => lab.disconnectWallet()}>
+                disconnect
+              </button>
+              <a onClick={() => void lab.refreshBalance()} style={{ cursor: "pointer" }}>
+                refresh balance
+              </a>
+            </>
+          ) : (
+            <button className="btn-send" style={{ padding: "10px 18px" }} onClick={() => void lab.connectWallet()}>
+              Connect Phantom
             </button>
           )}
         </div>
 
-        {dv.keyError && <p className="warn-note" style={{ color: "var(--coral)" }}>{dv.keyError}</p>}
-
-        {dv.address && (
-          <div className="kp-meta">
-            <span>
-              address <b>{dv.address}</b>
-            </span>
-            <span>
-              balance <b>{dv.loadingBalance ? "…" : dv.balanceSol === null ? "—" : `${dv.balanceSol.toFixed(4)} SOL`}</b>
-            </span>
-            <a href={`https://explorer.solana.com/address/${dv.address}?cluster=devnet`} target="_blank" rel="noreferrer">
-              address ↗
-            </a>
-            <a href="https://faucet.solana.com/" target="_blank" rel="noreferrer">
-              faucet ↗
-            </a>
-            <a onClick={() => void lab.refreshBalance()} style={{ cursor: "pointer" }}>
-              refresh
-            </a>
-          </div>
+        {dv.error && (
+          <p className="warn-note" style={{ color: "var(--coral)" }}>
+            {dv.error}
+            {!dv.available && (
+              <>
+                {" — "}
+                <a href="https://phantom.app/" target="_blank" rel="noreferrer">
+                  get Phantom ↗
+                </a>
+              </>
+            )}
+          </p>
         )}
+
+        <div className="kp-meta">
+          <span>
+            from <b>{dv.address ?? "—"}</b>
+          </span>
+          <span>
+            balance <b>{dv.loadingBalance ? "…" : dv.balanceSol === null ? "—" : `${dv.balanceSol.toFixed(4)} SOL`}</b>
+          </span>
+          <span>
+            to <b>{dv.recipient}</b>
+          </span>
+          {dv.address && (
+            <a href={`https://explorer.solana.com/address/${dv.address}?cluster=devnet`} target="_blank" rel="noreferrer">
+              sender ↗
+            </a>
+          )}
+        </div>
 
         {dv.explorerUrl && (
           <div className="explorer-link">

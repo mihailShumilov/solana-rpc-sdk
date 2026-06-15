@@ -63,21 +63,23 @@ npm run preview    # serves the built bundle
 
 ## Devnet mode (real transactions)
 
-Switch the network to **devnet** to land a real transaction:
+Switch the network to **devnet** to land a real transaction with **Phantom**:
 
-1. Provide a funded devnet keypair — paste a 64-byte secret-key JSON array (e.g.
-   the repo's `.devnet-keypair.json` from `examples/devnet-demo.ts`), or click
-   **generate** to mint one in-browser (then fund the shown address via the
-   linked faucet). The key is kept only in this browser's `localStorage`.
-2. **Send devnet tx** signs a 0.0001 SOL self-transfer and lands it through the
-   real `TransactionSender` against `api.devnet.solana.com`.
+1. **Connect Phantom** — the panel connects the injected Phantom provider and
+   shows the wallet address and its devnet balance (fund it via the linked
+   faucet if empty). Make sure Phantom itself is set to **Devnet**.
+2. **Send devnet tx** — Phantom is asked to sign a 0.0001 SOL transfer from your
+   wallet to a fixed recipient (`C29D7kTebateDoX7Y1qCugRu5AaY2j34fHZnAkY2fNhK`).
+   The signed bytes are then landed by the real `TransactionSender` against
+   `api.devnet.solana.com` (the SDK does the broadcast/rebroadcast/confirm — the
+   wallet only signs, the kit never sees the key).
 3. The event log prints the confirmed signature and an **explorer link**; the
    `Library` toggle still works, so you can compare the resilient sender against
    a naive single broadcast on the real network.
 
-> ⚠️ **Devnet only** — never paste a mainnet secret key into a web page.
-> Requires a modern browser (the kit signs via WebCrypto Ed25519) and the public
-> devnet RPC's permissive CORS.
+> ⚠️ **Devnet only.** The transaction is built with `@solana/web3.js` v1 (what
+> Phantom signs) and sent by the kit. Needs the Phantom extension and a browser
+> with WebCrypto; relies on the public devnet RPC's permissive CORS.
 
 ## How the live telemetry works
 

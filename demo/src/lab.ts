@@ -5,9 +5,8 @@
  *  - "sim": the REAL SDK (ResilientRpcPool, TransactionSender, JitoRouter,
  *    InMemoryMetrics) against the REAL simulation harness (MockCluster,
  *    MockEndpoint, MockJitoEngine). Fault scenarios mutate the mocks.
- *  - "devnet": the same SDK against a real Solana devnet RPC. With a funded
- *    keypair it builds, signs, sends, and confirms a real transfer and exposes
- *    the explorer link.
+ *  - "devnet": connect Phantom, sign a real transfer to a fixed recipient, and
+ *    land it through the SDK against Solana devnet — with an explorer link.
  *
  * The "SDK enabled" toggle swaps the resilient pipeline for a naive baseline
  * (one endpoint, single broadcast, no failover / rebroadcast / fallback) so the
@@ -23,29 +22,20 @@ import {
 import type { Metrics } from "../../src/observability/metrics.js";
 import type { JitoEngineClient } from "../../src/jito/router.js";
 import {
-  appendTransactionMessageInstruction,
   createDefaultRpcTransport,
-  createKeyPairSignerFromBytes,
   createSolanaRpcFromTransport,
-  createTransactionMessage,
-  getBase64EncodedWireTransaction,
-  getSignatureFromTransaction,
-  lamports,
-  pipe,
-  setTransactionMessageFeePayerSigner,
-  setTransactionMessageLifetimeUsingBlockhash,
-  signTransactionMessageWithSigners,
+  type Address,
   type Base64EncodedWireTransaction,
-  type KeyPairSigner,
   type Signature,
 } from "@solana/kit";
-import { getTransferSolInstruction } from "@solana-program/system";
 import {
+  base58Encode,
   MockCluster,
   MockEndpoint,
   MockJitoEngine,
   type EndpointFaultProfile,
 } from "../../test/harness/index.js";
+import { buildTransfer, bytesToBase64, getPhantom } from "./phantom.js";
 
 export type Network = "sim" | "devnet";
 export type Scenario = "healthy" | "drop" | "429" | "lag" | "jito-fail" | "congestion";
@@ -95,11 +85,13 @@ export interface ScenarioInfo {
 }
 
 export interface DevnetView {
-  hasKey: boolean;
+  available: boolean;
+  connected: boolean;
   address: string | null;
+  recipient: string;
   balanceSol: number | null;
   loadingBalance: boolean;
-  keyError: string | null;
+  error: string | null;
   lastSignature: string | null;
   explorerUrl: string | null;
 }
@@ -131,8 +123,8 @@ export interface LabState {
 
 const ENDPOINT_NAMES = ["rpc-aurora", "rpc-borealis", "rpc-citadel"] as const;
 const DEVNET_URL = "https://api.devnet.solana.com";
-const STORAGE_KEY = "rpc-lab-devnet-key";
-const TRANSFER_LAMPORTS = 100_000n; // 0.0001 SOL self-transfer
+const RECIPIENT = "C29D7kTebateDoX7Y1qCugRu5AaY2j34fHZnAkY2fNhK";
+const TRANSFER_LAMPORTS = 100_000; // 0.0001 SOL
 
 const SCENARIO_FAULTS: Record<Scenario, EndpointFaultProfile[]> = {
   healthy: [{}, {}, {}],
@@ -245,12 +237,11 @@ export class Lab {
   private txSeq = 0;
   private tally = { sdk: { confirmed: 0, total: 0 }, naive: { confirmed: 0, total: 0 } };
 
-  // devnet
-  private signer: KeyPairSigner | null = null;
-  private devnetAddress: string | null = null;
+  // devnet / wallet
+  private walletAddress: string | null = null;
   private balanceSol: number | null = null;
   private loadingBalance = false;
-  private keyError: string | null = null;
+  private walletError: string | null = null;
   private lastSignature: string | null = null;
 
   network: Network = "sim";
@@ -263,7 +254,6 @@ export class Lab {
 
   constructor(private readonly onUpdate: () => void) {
     this.reset();
-    void this.restoreKey();
   }
 
   /** Tear down and rebuild the SDK + harness stack (also clears metrics). */
@@ -307,11 +297,13 @@ export class Lab {
       info: SCENARIO_INFO[this.scenario],
       comparison: { sdk: this.toTally(this.tally.sdk), naive: this.toTally(this.tally.naive) },
       devnet: {
-        hasKey: this.signer !== null,
-        address: this.devnetAddress,
+        available: getPhantom() !== null,
+        connected: this.walletAddress !== null,
+        address: this.walletAddress,
+        recipient: RECIPIENT,
         balanceSol: this.balanceSol,
         loadingBalance: this.loadingBalance,
-        keyError: this.keyError,
+        error: this.walletError,
         lastSignature: this.lastSignature,
         explorerUrl: this.lastSignature ? explorerTx(this.lastSignature) : null,
       },
@@ -329,7 +321,7 @@ export class Lab {
     if (network === "devnet") {
       this.viaJito = false;
       this.ensureDevnetPool();
-      void this.refreshBalance();
+      void this.tryEagerConnect();
     }
     this.onUpdate();
   }
@@ -375,81 +367,61 @@ export class Lab {
     }
   }
 
-  // ---- devnet key management --------------------------------------------
+  // ---- wallet (devnet) ---------------------------------------------------
 
-  private async restoreKey(): Promise<void> {
-    try {
-      const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
-      if (!raw) return;
-      await this.useSecretBytes(Uint8Array.from(JSON.parse(raw) as number[]), false);
-    } catch {
-      /* ignore a bad stored key */
-    }
-  }
-
-  async setSecretKey(text: string): Promise<void> {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    let bytes: Uint8Array;
-    try {
-      const arr = JSON.parse(trimmed) as number[];
-      if (!Array.isArray(arr) || arr.length !== 64) throw new Error("expected a JSON array of 64 bytes");
-      bytes = Uint8Array.from(arr);
-    } catch (e) {
-      this.keyError = `invalid key: ${errMsg(e)}`;
+  async connectWallet(): Promise<void> {
+    const provider = getPhantom();
+    if (!provider) {
+      this.walletError = "Phantom not detected — install the Phantom browser extension";
       this.onUpdate();
       return;
     }
-    await this.useSecretBytes(bytes, true);
-  }
-
-  async generateKeypair(): Promise<void> {
     try {
-      const kp = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
-      const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", kp.privateKey));
-      const pub = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
-      const secret = new Uint8Array([...pkcs8.slice(-32), ...pub]); // 64-byte seed||pubkey
-      await this.useSecretBytes(secret, true);
-      this.line("generated a fresh devnet keypair — fund the address below, then send", "warn");
-    } catch (e) {
-      this.keyError = `generate failed (browser may lack WebCrypto Ed25519): ${errMsg(e)} — paste a key instead`;
-      this.onUpdate();
-    }
-  }
-
-  private async useSecretBytes(bytes: Uint8Array, persist: boolean): Promise<void> {
-    try {
-      const signer = await createKeyPairSignerFromBytes(bytes);
-      this.signer = signer;
-      this.devnetAddress = signer.address;
-      this.keyError = null;
-      if (persist) globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(Array.from(bytes)));
-      this.line(`devnet key loaded · ${signer.address}`, "good");
+      const resp = await provider.connect();
+      this.walletAddress = resp.publicKey.toString();
+      this.walletError = null;
+      this.line(`wallet connected · ${this.walletAddress}`, "good");
       this.onUpdate();
       await this.refreshBalance();
     } catch (e) {
-      this.keyError = `could not import key: ${errMsg(e)}`;
+      this.walletError = `connect failed: ${errMsg(e)}`;
       this.onUpdate();
     }
   }
 
-  clearKey(): void {
-    this.signer = null;
-    this.devnetAddress = null;
+  disconnectWallet(): void {
+    try {
+      void getPhantom()?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    this.walletAddress = null;
     this.balanceSol = null;
-    this.keyError = null;
-    globalThis.localStorage?.removeItem(STORAGE_KEY);
-    this.line("devnet key cleared", "muted");
+    this.walletError = null;
+    this.line("wallet disconnected", "muted");
     this.onUpdate();
   }
 
+  private async tryEagerConnect(): Promise<void> {
+    const provider = getPhantom();
+    if (!provider) return;
+    try {
+      const resp = await provider.connect({ onlyIfTrusted: true });
+      this.walletAddress = resp.publicKey.toString();
+      this.onUpdate();
+      await this.refreshBalance();
+    } catch {
+      /* not previously trusted — wait for an explicit connect */
+    }
+  }
+
   async refreshBalance(): Promise<void> {
-    if (!this.signer) return;
+    if (!this.walletAddress) return;
     this.loadingBalance = true;
     this.onUpdate();
     try {
       const rpc = this.ensureDevnetPool().rpc();
-      const { value } = await rpc.getBalance(this.signer.address).send();
+      const { value } = await rpc.getBalance(this.walletAddress as unknown as Address).send();
       this.balanceSol = Number(value) / 1e9;
     } catch (e) {
       this.line(`balance check failed: ${errMsg(e)}`, "warn");
@@ -491,7 +463,7 @@ export class Lab {
     let outcome: Outcome = "failed";
     try {
       if (this.network === "devnet") {
-        this.line(`SEND #${this.txSeq} · devnet · ${sdk ? "SDK" : "NO-SDK baseline"}`, "accent");
+        this.line(`SEND #${this.txSeq} · devnet → ${short(RECIPIENT)} · ${sdk ? "SDK" : "NO-SDK baseline"}`, "accent");
         this.mark("submit", "done");
         outcome = await this.runDevnet(sleep, sdk);
       } else {
@@ -617,42 +589,50 @@ export class Lab {
     return "expired";
   }
 
-  /** Build, sign, send and confirm a REAL transfer on devnet. */
+  /** Connect-wallet → sign with Phantom → land through the SDK on real devnet. */
   private async runDevnet(sleep: () => Promise<void>, sdk: boolean): Promise<Outcome> {
-    if (!this.signer) {
-      this.mark("outcome", "failed", "no key");
-      this.line("load or generate a funded devnet keypair first", "error");
+    const provider = getPhantom();
+    if (!provider || !this.walletAddress) {
+      this.mark("outcome", "failed", "no wallet");
+      this.line("connect Phantom first", "error");
       return "failed";
     }
     if (this.balanceSol !== null && this.balanceSol <= 0) {
       this.mark("outcome", "failed", "unfunded");
-      this.line(`${this.devnetAddress} has 0 SOL — fund it on devnet first`, "error");
+      this.line(`${this.walletAddress} has 0 SOL — fund it on devnet first`, "error");
       return "failed";
     }
 
-    const signer = this.signer;
     const pool = this.ensureDevnetPool();
     const rpc = pool.rpc();
     this.mark(sdk ? "route" : "pin", "active");
     this.line("fetching recent blockhash from devnet…", "info");
     const { value: latestBlockhash } = await rpc.getLatestBlockhash({ commitment: "confirmed" }).send();
 
-    const message = pipe(
-      createTransactionMessage({ version: 0 }),
-      (m) => setTransactionMessageFeePayerSigner(signer, m),
-      (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
-      (m) =>
-        appendTransactionMessageInstruction(
-          getTransferSolInstruction({ source: signer, destination: signer.address, amount: lamports(TRANSFER_LAMPORTS) }),
-          m,
-        ),
-    );
-    const signed = await signTransactionMessageWithSigners(message);
-    const signature = getSignatureFromTransaction(signed);
-    const wireTransaction = getBase64EncodedWireTransaction(signed);
+    const vtx = buildTransfer(this.walletAddress, RECIPIENT, TRANSFER_LAMPORTS, latestBlockhash.blockhash);
+    this.line(`requesting Phantom signature · ${TRANSFER_LAMPORTS / 1e9} SOL → ${short(RECIPIENT)}`, "info");
+    let signedBytes: Uint8Array;
+    let sig0: Uint8Array | undefined;
+    try {
+      const signed = await provider.signTransaction(vtx);
+      signedBytes = signed.serialize();
+      sig0 = signed.signatures[0];
+    } catch (e) {
+      this.mark(sdk ? "route" : "pin", "failed");
+      this.mark("outcome", "failed", "rejected");
+      this.line(`signature rejected: ${errMsg(e)}`, "error");
+      return "failed";
+    }
+    if (!sig0) {
+      this.mark("outcome", "failed", "unsigned");
+      this.line("wallet returned no signature", "error");
+      return "failed";
+    }
+    const signature = base58Encode(sig0);
+    const wireTransaction = bytesToBase64(signedBytes);
     this.lastSignature = signature;
     this.mark(sdk ? "route" : "pin", "done");
-    this.line(`signed self-transfer · ${short(signature)}`, "muted");
+    this.line(`signed by wallet · ${short(signature)}`, "muted");
 
     let outcome: Outcome;
     if (sdk) {
@@ -666,7 +646,7 @@ export class Lab {
       const naiveRpc = createSolanaRpcFromTransport(createDefaultRpcTransport({ url: DEVNET_URL }));
       this.mark("broadcast", "active", "single shot");
       try {
-        await naiveRpc.sendTransaction(wireTransaction, { encoding: "base64" }).send();
+        await naiveRpc.sendTransaction(wireTransaction as unknown as Base64EncodedWireTransaction, { encoding: "base64" }).send();
         this.mark("broadcast", "done");
         this.line("broadcast once (no rebroadcast)", "info");
       } catch (e) {
@@ -679,7 +659,7 @@ export class Lab {
       for (let i = 0; i < NAIVE_POLLS; i++) {
         this.tick("confirm");
         this.onUpdate();
-        const st = (await naiveRpc.getSignatureStatuses([signature]).send()).value[0];
+        const st = (await naiveRpc.getSignatureStatuses([signature as unknown as Signature]).send()).value[0];
         if (st && st.confirmationStatus != null && st.err == null) {
           outcome = "confirmed";
           break;
