@@ -32,6 +32,26 @@ npm run preview    # serves the built bundle
 > the SDK and harness sources from the repository root. Vite resolves the SDK's
 > `.js` ESM imports to their `.ts` sources automatically.
 
+## Deploy (Cloudflare Pages / static host)
+
+This app is fully self-contained: `@solana/kit` and `@opentelemetry/api` (the
+SDK source's runtime deps) are declared here and aliased to this package's own
+`node_modules` in [`vite.config.ts`](./vite.config.ts), so a build that installs
+only `demo/` resolves everything. The full repository is still cloned, so the
+build can read the SDK/harness sources from `../`.
+
+Cloudflare Pages settings:
+
+| Setting | Value |
+|---|---|
+| **Root directory** | `demo` |
+| **Build command** | `npm run build` |
+| **Build output directory** | `dist` |
+| **Node version** | 22 (pinned by [`.nvmrc`](./.nvmrc)) |
+
+The output is a static SPA — any static host (Netlify, GitHub Pages, S3, …)
+works the same way: install in `demo/`, `npm run build`, serve `demo/dist`.
+
 ## Two networks
 
 - **Simulation** (default) — the SDK runs against the in-memory fault-injection
