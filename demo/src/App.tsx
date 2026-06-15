@@ -281,7 +281,7 @@ function DevnetPanel({ lab, dv }: { lab: Lab; dv: DevnetView }) {
       <div className="card-body devnet-grid">
         <p className="warn-note">
           ⚠ Devnet only. Use the <b>Select / Connect Wallet</b> button (top right) to connect, then{" "}
-          <b>Send devnet tx</b> — the wallet signs a 0.0001 SOL transfer and the SDK lands it on devnet. The recipient is
+          <b>Send devnet tx</b> — the wallet signs a 0.001 SOL transfer and the SDK lands it on devnet. The recipient is
           fixed (below); flip <code>SDK</code> off to compare against a naive single broadcast.
         </p>
 

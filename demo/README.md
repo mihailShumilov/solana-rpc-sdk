@@ -71,8 +71,10 @@ auto-detected):
 1. Click **Select Wallet** (top right) and connect — the panel shows the wallet
    address and its devnet balance (fund it via the linked faucet if empty). Set
    the wallet to **Devnet**.
-2. **Send devnet tx** — the wallet signs a 0.0001 SOL transfer from your wallet
+2. **Send devnet tx** — the wallet signs a 0.001 SOL transfer from your wallet
    to a fixed recipient (`C29D7kTebateDoX7Y1qCugRu5AaY2j34fHZnAkY2fNhK`). The
+   amount clears the rent-exempt minimum so the first transfer can create the
+   recipient account. The
    signed bytes are then landed by the real `TransactionSender` against
    `api.devnet.solana.com` (the SDK does the broadcast/rebroadcast/confirm — the
    wallet only signs, the kit never sees the key).

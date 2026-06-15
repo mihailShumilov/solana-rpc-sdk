@@ -128,7 +128,10 @@ export interface LabState {
 const ENDPOINT_NAMES = ["rpc-aurora", "rpc-borealis", "rpc-citadel"] as const;
 const DEVNET_URL = "https://api.devnet.solana.com";
 const RECIPIENT = "C29D7kTebateDoX7Y1qCugRu5AaY2j34fHZnAkY2fNhK";
-const TRANSFER_LAMPORTS = 100_000; // 0.0001 SOL
+// 0.001 SOL. Must clear the rent-exempt minimum (~890,880 lamports for a 0-byte
+// account): the fixed recipient starts empty, so the first transfer creates it,
+// and a sub-rent amount would be rejected with InsufficientFundsForRent.
+const TRANSFER_LAMPORTS = 1_000_000;
 
 const SCENARIO_FAULTS: Record<Scenario, EndpointFaultProfile[]> = {
   healthy: [{}, {}, {}],
