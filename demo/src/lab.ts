@@ -457,6 +457,7 @@ export class Lab {
       outcome = "failed";
     } finally {
       this.recordOutcome(sdk, outcome);
+      this.settleSteps(outcome);
       this.running = false;
       this.onUpdate();
     }
@@ -770,6 +771,23 @@ export class Lab {
     if (!step) return;
     step.status = status;
     if (detail !== undefined) step.detail = detail;
+  }
+
+  /** Once the outcome is decided, close out any step left mid-flight. The
+   * rebroadcast step pulses "active" on each resend and is otherwise never
+   * settled, so a confirmed run would leave it stuck cyan; promote lingering
+   * active steps to the terminal colour. A rebroadcast that never fired (tx
+   * confirmed on the first send) is marked skipped — it simply wasn't needed. */
+  private settleSteps(outcome: Outcome): void {
+    const terminal: StepStatus = outcome === "confirmed" ? "done" : "failed";
+    for (const step of this.steps) {
+      if (step.status === "active") {
+        step.status = terminal;
+      } else if (step.id === "rebroadcast" && step.status === "idle" && outcome === "confirmed") {
+        step.status = "skipped";
+        step.detail = "not needed";
+      }
+    }
   }
 
   private tick(id: StepId): void {
