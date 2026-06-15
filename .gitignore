@@ -7,3 +7,11 @@ coverage/
 .env.*
 .idea/
 .devnet-keypair.json
+
+# Local development scaffolding — kept on disk, not published
+.claude/
+.mcp.json
+CLAUDE.md
+CLAUDE_CODE_BUILD_PLAYBOOK.md
+01_PROBLEM_ANALYSIS.md
+01_PROBLEM_ANALYSIS_RU.md
