@@ -13,6 +13,10 @@
 import type { Base64EncodedWireTransaction, Rpc, SolanaRpcApi } from "@solana/kit";
 import type { Metrics } from "../observability/metrics.js";
 import { ConfirmationTracker, type TerminalOutcome } from "./confirmation.js";
+import { ErrorTranslator } from "../error-translator.js";
+import type { LifecycleEmitter } from "../events.js";
+import { ClusterDetector, type ClusterGuardConfig } from "../rpc/cluster.js";
+import { ClusterMismatchError } from "../errors.js";
 
 export interface SendConfig {
   /** Base64 wire transaction (from getBase64EncodedWireTransaction). */
@@ -24,6 +28,8 @@ export interface SendConfig {
   rebroadcastIntervalMs?: number;
   /** Commitment for confirmation (default "confirmed"). */
   commitment?: "confirmed" | "finalized";
+  /** Stable logical id for lifecycle events; defaults to the signature. */
+  txId?: string;
 }
 
 export interface SendResult {
@@ -37,17 +43,57 @@ export interface SenderDeps {
   /** Injected sleep so tests advance the mock clock per loop iteration. */
   sleep?: (ms: number) => Promise<void>;
   metrics?: Metrics;
+  /** Optional typed lifecycle event stream for dApp UIs. */
+  events?: LifecycleEmitter;
+  /** Optional guard that blocks/warns when the RPC is on the wrong cluster. */
+  clusterGuard?: ClusterGuardConfig;
 }
 
 export class TransactionSender {
   private readonly rpc: Rpc<SolanaRpcApi>;
   private readonly metrics: Metrics | undefined;
+  private readonly events: LifecycleEmitter | undefined;
+  private readonly clusterGuard: ClusterGuardConfig | undefined;
+  private readonly clusterDetector: ClusterDetector;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(rpc: Rpc<SolanaRpcApi>, deps?: SenderDeps) {
     this.rpc = rpc;
     this.metrics = deps?.metrics;
+    this.events = deps?.events;
+    this.clusterGuard = deps?.clusterGuard;
+    this.clusterDetector = deps?.clusterGuard?.detector ?? new ClusterDetector();
     this.sleep = deps?.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+
+  /**
+   * Cluster guard: detect the RPC's cluster (cached) and, on a definitive
+   * mismatch with the expected cluster, either throw a {@link ClusterMismatchError}
+   * BEFORE any broadcast (`throw`) or emit `connection:cluster-mismatch` and
+   * proceed (`warn`). An `unknown` cluster (detection failed) never blocks — we
+   * don't turn a transient genesis-lookup failure into a hard error.
+   */
+  private async guardCluster(): Promise<void> {
+    const guard = this.clusterGuard;
+    if (guard === undefined || guard.mode === "off") return;
+
+    const info = await this.clusterDetector.detectFromRpc(this.rpc);
+    if (info.cluster !== "unknown") {
+      this.events?.emit("connection:cluster-detected", {
+        cluster: info.cluster,
+        genesisHash: info.genesisHash ?? "",
+      });
+    }
+    if (info.cluster === "unknown" || info.cluster === guard.expected) return;
+
+    this.events?.emit("connection:cluster-mismatch", {
+      expected: guard.expected,
+      actual: info.cluster,
+      genesisHash: info.genesisHash ?? "",
+    });
+    if ((guard.mode ?? "throw") === "throw") {
+      throw new ClusterMismatchError(guard.expected, info.cluster, info.genesisHash);
+    }
   }
 
   /**
@@ -73,13 +119,40 @@ export class TransactionSender {
         })
         .send();
 
+    // Guard the cluster BEFORE anything is broadcast: a wrong-network send must
+    // never leave the client.
+    await this.guardCluster();
+
+    const txId = config.txId ?? config.signature;
+    const startedAt = Date.now();
+    let rebroadcasts = 0;
+    const baseEvent = (): {
+      txId: string;
+      signature: string;
+      attempt: number;
+      durationMs: number;
+    } => ({
+      txId,
+      signature: config.signature,
+      attempt: rebroadcasts,
+      durationMs: Date.now() - startedAt,
+    });
+
+    this.events?.emit("transaction:pending", baseEvent());
+
     // Initial broadcast: the first send, with maxRetries disabled. A failure
     // here is a genuine signal that the transaction is malformed or unfundable
     // (e.g. InsufficientFundsForRent / bad blockhash) and will never land, so we
-    // surface it immediately rather than spinning the confirm loop.
-    await broadcast();
-
-    let rebroadcasts = 0;
+    // surface it immediately rather than spinning the confirm loop. The raw RPC
+    // error is translated into an actionable SdkError at this boundary.
+    try {
+      await broadcast();
+    } catch (err) {
+      const translated = ErrorTranslator.translate(err, { extra: "sendTransaction" });
+      this.events?.emit("transaction:failed", { ...baseEvent(), err: translated });
+      throw translated;
+    }
+    this.events?.emit("transaction:sent", baseEvent());
 
     // A fresh tracker per call. Its sleep hook is where we rebroadcast: the
     // tracker checks status BEFORE sleeping, so an unlanded tx triggers at least
@@ -111,6 +184,14 @@ export class TransactionSender {
     });
 
     this.metrics?.recordLanding(config.signature, res.outcome, res.polls);
+
+    if (res.outcome === "confirmed") {
+      this.events?.emit("transaction:confirmed", { ...baseEvent(), slot: res.slot });
+    } else if (res.outcome === "failed") {
+      this.events?.emit("transaction:failed", { ...baseEvent(), err: res.err });
+    } else {
+      this.events?.emit("transaction:expired", baseEvent());
+    }
 
     return {
       signature: config.signature,

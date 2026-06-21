@@ -8,6 +8,8 @@ export { MockEndpoint } from "./mock-endpoint.js";
 export type { MockEndpointOptions } from "./mock-endpoint.js";
 export { MockJitoEngine, bundleId } from "./mock-jito.js";
 export type { MockJitoOptions, BundleState } from "./mock-jito.js";
+export { MockSubscriptions } from "./mock-subscriptions.js";
+export type { SignatureNotification } from "./mock-subscriptions.js";
 export {
   type EndpointFaultProfile,
   HttpTransportError,

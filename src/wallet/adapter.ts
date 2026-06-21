@@ -5,6 +5,7 @@
  * Jito router — so a dApp gets reliable landing without changing how it signs.
  */
 import type { TransactionSender, SendResult } from "../tx/sender.js";
+import { ErrorTranslator } from "../error-translator.js";
 
 /** Minimal shape of a wallet-adapter signer (a subset of the real interface). */
 export interface WalletSigner {
@@ -50,7 +51,14 @@ export class ResilientWalletAdapter {
     unsignedWireTransaction: string,
     lastValidBlockHeight: bigint,
   ): Promise<SendResult> {
-    const signedWire = await this.signer.signTransaction(unsignedWireTransaction);
+    let signedWire: string;
+    try {
+      signedWire = await this.signer.signTransaction(unsignedWireTransaction);
+    } catch (err) {
+      // A wallet rejection ("User rejected the request") becomes a typed
+      // USER_REJECTED error; any other signing failure is translated too.
+      throw ErrorTranslator.translate(err, { extra: "signTransaction" });
+    }
     return this.sender.sendAndConfirm({
       wireTransaction: signedWire,
       signature: signedWire,

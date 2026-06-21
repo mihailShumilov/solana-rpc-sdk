@@ -67,6 +67,10 @@ The decisive finding: every robust mitigation today is **either a DIY recipe in 
 | `JitoRouter` + `TipEstimator` | `src/jito/*` | Bundle routing, dynamic tips, automatic RPC fallback |
 | `OtelMetrics` / `InMemoryMetrics` | `src/observability/metrics.ts` | Client telemetry (latency, failures, slot lag, landings) → OTel/Datadog |
 | `ResilientWalletAdapter` | `src/wallet/adapter.ts` | Wallet-signed transactions through the resilient pipeline |
+| `WalletAdapterBridge` (+ `useResilientSender`) | `src/wallet/wallet-adapter-bridge.ts`, `src/react/*` | Bridge a standard `@solana/wallet-adapter` signer into the resilient sender + Jito router; optional React hook (see [Wallet-adapter bridge](#wallet-adapter-bridge--react-hook)) |
+| `ErrorTranslator` | `src/error-translator.ts` | Map raw RPC/program/wallet errors to a stable `code` + actionable `userMessage`/`suggestion` |
+| `LifecycleEmitter` | `src/events.ts` | Typed, browser-safe `transaction:*` / `connection:*` event stream for dApp UIs |
+| `ClusterDetector` | `src/rpc/cluster.ts` | Identify the cluster via genesis hash; guard against sending to the wrong network |
 | `Diagnostics` + `solana-resilience-diagnose` CLI | `src/cli/diagnose.ts`, `src/cli/index.ts` | Probe provider health; explain why a transaction did or didn't land (see [Diagnostics CLI](#diagnostics-cli)) |
 
 ## Architecture
@@ -132,10 +136,65 @@ const result = await sender.sendAndConfirm({
   lastValidBlockHeight,   // from the blockhash the tx was built with
 });
 
-// result.outcome is "confirmed" or "expired" — decided by block height,
-// not a timeout. The sender uses maxRetries:0, rebroadcasts the *same*
-// signed bytes, never re-signs (so it can never double-charge), and treats a
-// resend error on an already-landed tx as non-terminal.
+// result.outcome is "confirmed", "failed" (landed but reverted), or "expired" —
+// decided by block height, not a timeout. The sender uses maxRetries:0,
+// rebroadcasts the *same* signed bytes, never re-signs (so it can never
+// double-charge), and treats a resend error on an already-landed tx as
+// non-terminal.
+```
+
+## Wallet-adapter bridge + React hook
+
+Bring your own `@solana/wallet-adapter` wallet (Phantom, Solflare, Backpack…) and
+land its signed transactions through the resilient sender — and through Jito with
+automatic RPC fallback when a router is supplied. `react` and
+`@solana/wallet-adapter-*` are **optional** peer deps; the React hook lives behind
+the `solana-resilience-kit/react` subpath, so the core bundle stays framework-agnostic.
+
+```ts
+import { WalletAdapterBridge } from "solana-resilience-kit";
+import {
+  getBase64EncodedWireTransaction,
+  getSignatureFromTransaction,
+} from "@solana/kit";
+
+// `wallet` is a standard wallet-adapter signer, e.g. Phantom via
+// useWallet() from @solana/wallet-adapter-react.
+const bridge = new WalletAdapterBridge({
+  wallet,                 // { publicKey, signTransaction, signAllTransactions? }
+  sender,                 // TransactionSender (built on a ResilientRpcPool)
+  jito: router,           // optional: route via Jito, fall back to RPC
+  // Turn the wallet-signed kit transaction into wire + signature:
+  encode: (signed) => ({
+    wireTransaction: getBase64EncodedWireTransaction(signed),
+    signature: getSignatureFromTransaction(signed),
+  }),
+});
+
+const result = await bridge.signAndSend(transaction, { lastValidBlockHeight });
+// A wallet rejection surfaces as a typed USER_REJECTED error (ErrorTranslator).
+```
+
+React ergonomic with live status sourced from the lifecycle event stream:
+
+```tsx
+import { useWallet } from "@solana/wallet-adapter-react";
+import { useResilientSender } from "solana-resilience-kit/react";
+
+function SendButton({ sender, transaction, lastValidBlockHeight }) {
+  const wallet = useWallet(); // Phantom / Solflare / Backpack …
+  const { signAndSend, status, error, address } = useResilientSender({ wallet, sender });
+
+  return (
+    <button
+      disabled={!address || status === "pending"}
+      onClick={() => signAndSend(transaction, { lastValidBlockHeight })}
+    >
+      {status === "pending" ? "Sending…" : `Send (${status})`}
+      {error ? ` — ${String(error)}` : ""}
+    </button>
+  );
+}
 ```
 
 ## Diagnostics CLI

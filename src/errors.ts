@@ -37,3 +37,17 @@ export class BundleNotLandedError extends SdkError {
     super(`bundle ${bundleId} did not land`);
   }
 }
+
+/** The RPC's cluster does not match the cluster the caller expected (wrong network). */
+export class ClusterMismatchError extends SdkError {
+  constructor(
+    readonly expected: string,
+    readonly actual: string,
+    readonly genesisHash: string | null,
+  ) {
+    super(
+      `cluster mismatch: expected ${expected} but the RPC reports ${actual}` +
+        (genesisHash !== null ? ` (genesis ${genesisHash})` : ""),
+    );
+  }
+}

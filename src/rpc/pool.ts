@@ -16,6 +16,7 @@ import { AllEndpointsFailedError } from "../errors.js";
 import { HealthMonitor, type EndpointHealth } from "./health.js";
 import type { CreditRateLimiter } from "./rate-limit.js";
 import type { Metrics } from "../observability/metrics.js";
+import type { LifecycleEmitter } from "../events.js";
 
 /** Minimal shape of the JSON-RPC payload a kit transport receives. */
 interface JsonRpcPayload {
@@ -39,6 +40,12 @@ function isRateLimited(err: unknown): boolean {
     typeof err === "object" &&
     (err as { statusCode?: unknown }).statusCode === 429
   );
+}
+
+/** Best-effort human reason string for a failover event. */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 /** Defensively read a bigint slot off a getSlot response (result is the slot). */
@@ -65,6 +72,8 @@ export interface ResilientRpcConfig {
   healthMonitor?: HealthMonitor;
   rateLimiter?: CreditRateLimiter;
   metrics?: Metrics;
+  /** Optional typed lifecycle event stream (failover / health for dApp UIs). */
+  events?: LifecycleEmitter;
 }
 
 export class ResilientRpcPool {
@@ -74,8 +83,11 @@ export class ResilientRpcPool {
   private readonly healthMonitor: HealthMonitor;
   private readonly rateLimiter?: CreditRateLimiter;
   private readonly metrics?: Metrics;
+  private readonly events?: LifecycleEmitter;
   private readonly freshnessAware: boolean;
   private readonly maxAttempts: number;
+  /** Last-known health per endpoint, so we only emit `connection:health` on change. */
+  private readonly lastHealthy = new Map<string, boolean>();
 
   constructor(config: ResilientRpcConfig) {
     this.endpoints = config.endpoints;
@@ -86,8 +98,12 @@ export class ResilientRpcPool {
       new HealthMonitor({ endpointNames: this.endpointNames, maxSlotLag: 150n });
     this.rateLimiter = config.rateLimiter;
     this.metrics = config.metrics;
+    this.events = config.events;
     this.freshnessAware = config.freshnessAware ?? true;
     this.maxAttempts = config.maxAttempts ?? config.endpoints.length;
+    // Assume healthy at start so the first successful request is not noise; only
+    // a genuine transition (ejection / recovery) emits a `connection:health`.
+    for (const name of this.endpointNames) this.lastHealthy.set(name, true);
   }
 
   /** The failover transport. Plug into `createSolanaRpcFromTransport`. */
@@ -125,12 +141,24 @@ export class ResilientRpcPool {
           this.healthMonitor.recordSuccess(name, latencyMs, slot);
           if (slot !== undefined) this.metrics?.recordSlot(name, slot);
           this.metrics?.recordRequest(name, method, latencyMs, true);
+          // We reached this endpoint only after one or more prior endpoints
+          // failed this request → that is a failover.
+          if (attempts.length > 0) {
+            const prev = attempts[attempts.length - 1] as { endpoint: string; error: unknown };
+            this.events?.emit("connection:failover", {
+              from: prev.endpoint,
+              to: name,
+              reason: errorMessage(prev.error),
+            });
+          }
+          this.noteHealth(name);
           return response as unknown as TResponse;
         } catch (err) {
           const latencyMs = Date.now() - start;
           if (isRateLimited(err)) this.metrics?.recordRateLimited(name);
           this.healthMonitor.recordFailure(name, err);
           this.metrics?.recordRequest(name, method, latencyMs, false);
+          this.noteHealth(name);
           attempts.push({ endpoint: name, error: err });
         }
       }
@@ -174,6 +202,16 @@ export class ResilientRpcPool {
     return [...ranked, ...fallback];
   }
 
+  /** Emit `connection:health` only when an endpoint's health actually flips. */
+  private noteHealth(name: string): void {
+    if (this.events === undefined) return;
+    const healthy = this.healthMonitor.isHealthy(name);
+    if (this.lastHealthy.get(name) === healthy) return;
+    this.lastHealthy.set(name, healthy);
+    const snap = this.healthMonitor.snapshot().find((s) => s.name === name);
+    this.events.emit("connection:health", { endpoint: name, healthy, slot: snap?.slot ?? null });
+  }
+
   /** Probe a single endpoint's getSlot, feeding health/metrics. Never throws. */
   private async probe(endpoint: ResilientEndpoint): Promise<void> {
     const probePayload: JsonRpcPayload = { jsonrpc: "2.0", id: 1, method: "getSlot", params: [] };
@@ -184,9 +222,11 @@ export class ResilientRpcPool {
       const slot = slotFromResponse(response);
       this.healthMonitor.recordSuccess(endpoint.name, latencyMs, slot);
       if (slot !== undefined) this.metrics?.recordSlot(endpoint.name, slot);
+      this.noteHealth(endpoint.name);
     } catch (err) {
       // Swallow: a probe failure must never abort the real request path.
       this.healthMonitor.recordFailure(endpoint.name, err);
+      this.noteHealth(endpoint.name);
     }
   }
 }

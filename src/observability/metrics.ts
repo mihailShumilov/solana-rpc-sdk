@@ -8,6 +8,7 @@
  */
 import { metrics } from "@opentelemetry/api";
 import type { Counter, Gauge, Histogram, Meter } from "@opentelemetry/api";
+import type { TerminalOutcome } from "../tx/confirmation.js";
 
 export interface Metrics {
   /** Per-endpoint request latency (ms) with success/failure outcome. */
@@ -17,7 +18,7 @@ export interface Metrics {
   /** A transaction was (re)broadcast to the network. */
   recordRebroadcast(signature: string): void;
   /** Terminal transaction outcome. */
-  recordLanding(signature: string, outcome: "confirmed" | "expired", slots: number): void;
+  recordLanding(signature: string, outcome: TerminalOutcome, slots: number): void;
   /** Observed slot for an endpoint (drives slot-lag dashboards). */
   recordSlot(endpoint: string, slot: bigint): void;
 }
@@ -27,7 +28,7 @@ export class InMemoryMetrics implements Metrics {
   readonly requests: Array<{ endpoint: string; method: string; latencyMs: number; ok: boolean }> = [];
   readonly rateLimited: string[] = [];
   readonly rebroadcasts: string[] = [];
-  readonly landings: Array<{ signature: string; outcome: "confirmed" | "expired"; slots: number }> = [];
+  readonly landings: Array<{ signature: string; outcome: TerminalOutcome; slots: number }> = [];
   readonly slots: Array<{ endpoint: string; slot: bigint }> = [];
 
   recordRequest(endpoint: string, method: string, latencyMs: number, ok: boolean): void {
@@ -39,7 +40,7 @@ export class InMemoryMetrics implements Metrics {
   recordRebroadcast(signature: string): void {
     this.rebroadcasts.push(signature);
   }
-  recordLanding(signature: string, outcome: "confirmed" | "expired", slots: number): void {
+  recordLanding(signature: string, outcome: TerminalOutcome, slots: number): void {
     this.landings.push({ signature, outcome, slots });
   }
   recordSlot(endpoint: string, slot: bigint): void {
@@ -90,7 +91,7 @@ export class OtelMetrics implements Metrics {
   recordRebroadcast(signature: string): void {
     this.rebroadcasts.add(1, { signature });
   }
-  recordLanding(signature: string, outcome: "confirmed" | "expired", slots: number): void {
+  recordLanding(signature: string, outcome: TerminalOutcome, slots: number): void {
     this.landings.add(1, { signature, outcome, slots });
   }
   recordSlot(endpoint: string, slot: bigint): void {
