@@ -162,8 +162,8 @@ export function App() {
 
       <footer className="footer">
         <span>real SDK · {devnet ? "real devnet" : "simulation harness"} · vendor-neutral resilience</span>
-        <a href="https://github.com/mihailShumilov/solana-rpc-sdk" target="_blank" rel="noreferrer">
-          github.com/mihailShumilov/solana-rpc-sdk
+        <a href="https://github.com/mihailShumilov/solana-resilience-kit" target="_blank" rel="noreferrer">
+          github.com/mihailShumilov/solana-resilience-kit
         </a>
       </footer>
     </div>

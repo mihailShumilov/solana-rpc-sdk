@@ -14,7 +14,7 @@ jobs:
   publish:
     # Publishes to npm via OIDC "trusted publishing" — no token, no OTP.
     # Fires only on a version tag (e.g. v1.0.1) whose package.json version matches.
-    # Requires the npm Trusted Publisher configured for mihailShumilov/solana-rpc-sdk
+    # Requires the npm Trusted Publisher configured for mihailShumilov/solana-resilience-kit
     # against this workflow file (ci.yml).
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
