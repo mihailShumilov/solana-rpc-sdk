@@ -20,6 +20,16 @@ import { run as feeEstimation } from "./fee-estimation.js";
 import feeEstimationSrc from "./fee-estimation.ts?raw";
 import { run as observability } from "./observability.js";
 import observabilitySrc from "./observability.ts?raw";
+import { run as clusterGuard } from "./cluster-guard.js";
+import clusterGuardSrc from "./cluster-guard.ts?raw";
+import { run as multiEndpointConfirm } from "./multi-endpoint-confirm.js";
+import multiEndpointConfirmSrc from "./multi-endpoint-confirm.ts?raw";
+import { run as lifecycleEvents } from "./lifecycle-events.js";
+import lifecycleEventsSrc from "./lifecycle-events.ts?raw";
+import { run as errorTranslation } from "./error-translation.js";
+import errorTranslationSrc from "./error-translation.ts?raw";
+import { run as walletBridge } from "./wallet-bridge.js";
+import walletBridgeSrc from "./wallet-bridge.ts?raw";
 import { run as testYourDapp } from "./test-your-dapp.js";
 import testYourDappSrc from "./test-your-dapp.ts?raw";
 
@@ -98,6 +108,51 @@ export const EXAMPLES: Example[] = [
       "One Metrics sink, shared by the pool and sender, captures landing rate, failovers, and rebroadcasts across a batch of sends — with zero extra instrumentation in your code.",
     code: observabilitySrc,
     run: observability,
+  },
+  {
+    id: "cluster-guard",
+    title: "Cluster guard",
+    tag: "rpc · safety",
+    description:
+      "Sending a mainnet-intended tx to a devnet RPC is a classic footgun. ClusterDetector reads the immutable genesis hash (cached per client) and the sender's clusterGuard throws ClusterMismatchError BEFORE any broadcast leaves the client.",
+    code: clusterGuardSrc,
+    run: clusterGuard,
+  },
+  {
+    id: "multi-endpoint-confirm",
+    title: "Multi-endpoint + WebSocket confirm",
+    tag: "tx · confirmation",
+    description:
+      "A lagging node can withhold a signature status. ConfirmationTracker fans status polling across the freshest healthy endpoints (any node's definitive result wins, dead nodes tolerated) and races a signatureNotifications WebSocket fast-path — while the poll loop stays the sole authority for expiry.",
+    code: multiEndpointConfirmSrc,
+    run: multiEndpointConfirm,
+  },
+  {
+    id: "lifecycle-events",
+    title: "Lifecycle events",
+    tag: "events · UI",
+    description:
+      "The SDK emits the same internal signals to a typed, browser-safe LifecycleEmitter (for UIs) that it reports to OpenTelemetry (for infra). Subscribe once and render live pending → sent → confirmed plus failover/health — a throwing listener is isolated from the send path.",
+    code: lifecycleEventsSrc,
+    run: lifecycleEvents,
+  },
+  {
+    id: "error-translation",
+    title: "Error translation",
+    tag: "dx · errors",
+    description:
+      "Raw Solana errors are opaque (RPC strings, program Custom codes as hex, wallet rejections, 429s). ErrorTranslator maps them to a stable code + category + human userMessage + suggestion, preserving the original. Pure, total, idempotent — the same dictionary backs the CLI.",
+    code: errorTranslationSrc,
+    run: errorTranslation,
+  },
+  {
+    id: "wallet-bridge",
+    title: "Wallet-adapter bridge",
+    tag: "wallet · dx",
+    description:
+      "Bring your own wallet-adapter wallet and land its signed transactions through the resilient pipeline (and Jito with fallback). It never re-signs, surfaces a rejection as typed USER_REJECTED, and signAndSendAll batches a sign-once / land-in-order flow.",
+    code: walletBridgeSrc,
+    run: walletBridge,
   },
   {
     id: "test-your-dapp",

@@ -13,8 +13,10 @@
  * value of the kit is directly comparable.
  */
 import {
+  ErrorTranslator,
   InMemoryMetrics,
   JitoRouter,
+  LifecycleEmitter,
   ResilientRpcPool,
   TipEstimator,
   TransactionSender,
@@ -235,6 +237,8 @@ export class Lab {
   private endpoints!: MockEndpoint[];
   private metrics!: InMemoryMetrics;
   private sink!: Metrics;
+  /** Typed lifecycle stream, shared by the pool + sender; mirrored into the log. */
+  private events!: LifecycleEmitter;
   private pool!: ResilientRpcPool;
   private devnetPool: ResilientRpcPool | null = null;
 
@@ -269,9 +273,13 @@ export class Lab {
     this.endpoints = ENDPOINT_NAMES.map((name, i) => new MockEndpoint(this.cluster, { name, rngSeed: 0xc0ffee + i }));
     this.metrics = new InMemoryMetrics();
     this.sink = this.makeSink();
+    this.events = new LifecycleEmitter();
+    this.wireEvents();
+    this.devnetPool = null; // rebuild with the fresh emitter on next devnet use
     this.pool = new ResilientRpcPool({
       endpoints: this.endpoints.map((e) => ({ name: e.name, transport: e.transport })),
       metrics: this.sink,
+      events: this.events,
     });
     this.steps = this.freshSteps();
     this.scenario = "healthy";
@@ -413,6 +421,7 @@ export class Lab {
       this.devnetPool = new ResilientRpcPool({
         endpoints: [{ name: "devnet", transport: createDefaultRpcTransport({ url: DEVNET_URL }) }],
         metrics: this.sink,
+        events: this.events,
         freshnessAware: false,
       });
     }
@@ -453,7 +462,9 @@ export class Lab {
       }
     } catch (err) {
       this.mark("outcome", "failed", "unhandled");
-      this.line(`FAILED: ${errMsg(err)}`, "error");
+      // ErrorTranslator is idempotent: an already-translated SdkError passes through.
+      const t = ErrorTranslator.translate(err);
+      this.line(`FAILED · ${t.code}: ${t.userMessage}`, "error");
       outcome = "failed";
     } finally {
       this.recordOutcome(sdk, outcome);
@@ -467,7 +478,7 @@ export class Lab {
    * Jito routing with RPC fallback. */
   private async runSdk(sig: string, lastValidBlockHeight: bigint, sleep: () => Promise<void>, viaJito: boolean): Promise<Outcome> {
     this.mark("route", "active");
-    const sender = new TransactionSender(this.pool.rpc(), { sleep, metrics: this.sink });
+    const sender = new TransactionSender(this.pool.rpc(), { sleep, metrics: this.sink, events: this.events });
 
     let outcome: Outcome;
     let route: "jito" | "rpc" | null = null;
@@ -598,7 +609,10 @@ export class Lab {
     } catch (e) {
       this.mark(sdk ? "route" : "pin", "failed");
       this.mark("outcome", "failed", "rejected");
-      this.line(`signature rejected: ${errMsg(e)}`, "error");
+      // Map the raw wallet error to a friendly, actionable message.
+      const t = ErrorTranslator.translate(e, { extra: "signTransaction" });
+      this.line(`signature rejected · ${t.code}: ${t.userMessage}`, "error");
+      this.line(`suggestion: ${t.suggestion}`, "muted");
       return "failed";
     }
     if (!sig0) {
@@ -614,7 +628,15 @@ export class Lab {
 
     let outcome: Outcome;
     if (sdk) {
-      const sender = new TransactionSender(rpc, { sleep, metrics: this.sink });
+      // clusterGuard detects the RPC's cluster from its genesis hash and would
+      // block a wrong-network send before broadcast; here it confirms devnet and
+      // emits connection:cluster-detected into the event stream.
+      const sender = new TransactionSender(rpc, {
+        sleep,
+        metrics: this.sink,
+        events: this.events,
+        clusterGuard: { expected: "devnet" },
+      });
       const res = await sender.sendAndConfirm({ wireTransaction, signature, lastValidBlockHeight: latestBlockhash.lastValidBlockHeight });
       outcome = res.outcome;
       this.mark("broadcast", "done");
@@ -662,6 +684,28 @@ export class Lab {
     const t = sdk ? this.tally.sdk : this.tally.naive;
     t.total += 1;
     if (outcome === "confirmed") t.confirmed += 1;
+  }
+
+  // ---- lifecycle event stream -------------------------------------------
+
+  /** Mirror the SDK's typed lifecycle events into the activity log. These are
+   * the SAME signals a dApp UI would subscribe to (transaction:* / connection:*),
+   * driven by the real pool + sender in both simulation and devnet modes. */
+  private wireEvents(): void {
+    const e = this.events;
+    e.on("transaction:pending", () => this.line("event · transaction:pending", "muted"));
+    e.on("transaction:sent", () => this.line("event · transaction:sent", "muted"));
+    e.on("transaction:confirmed", (p) =>
+      this.line(`event · transaction:confirmed${p.slot != null ? ` · slot ${Number(p.slot)}` : ""}`, "muted"),
+    );
+    e.on("transaction:failed", () => this.line("event · transaction:failed", "muted"));
+    e.on("transaction:expired", () => this.line("event · transaction:expired", "muted"));
+    e.on("connection:failover", (p) => this.line(`event · connection:failover · ${p.from}→${p.to}`, "muted"));
+    e.on("connection:health", (p) => this.line(`event · connection:health · ${p.endpoint} healthy=${p.healthy}`, "muted"));
+    e.on("connection:cluster-detected", (p) => this.line(`event · cluster-detected · ${p.cluster}`, "muted"));
+    e.on("connection:cluster-mismatch", (p) =>
+      this.line(`event · cluster-mismatch · expected ${p.expected}, got ${p.actual}`, "warn"),
+    );
   }
 
   // ---- emitting metrics sink --------------------------------------------
