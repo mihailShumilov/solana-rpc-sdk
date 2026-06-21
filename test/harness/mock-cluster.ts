@@ -29,6 +29,8 @@ export interface MockClusterOptions {
   defaultLandingDelaySlots?: number;
   /** Seed used to mint deterministic blockhash strings. */
   blockhashSeed?: number;
+  /** Genesis hash this cluster reports (default = mainnet-beta's). */
+  genesisHash?: string;
 }
 
 interface PendingTx {
@@ -58,13 +60,18 @@ export class MockCluster {
   private readonly txs = new Map<string, PendingTx>();
   /** Per-signature override of landing delay; -1 means "never lands". */
   private readonly landingOverrides = new Map<string, number>();
+  /** Per-signature on-chain execution error: the tx LANDS but with `err != null`. */
+  private readonly failureOverrides = new Map<string, unknown>();
   private prioritizationFees: bigint[] = [10_000n, 25_000n, 50_000n, 75_000n, 95_000n];
+  /** Genesis hash this cluster reports (mainnet-beta's by default). */
+  readonly genesisHash: string;
 
   constructor(opts: MockClusterOptions = {}) {
     this.slot = opts.initialSlot ?? 1000n;
     this.blockHeight = opts.initialBlockHeight ?? 1000n;
     this.defaultLandingDelaySlots = opts.defaultLandingDelaySlots ?? 1;
     this.blockhashSeed = opts.blockhashSeed ?? 1;
+    this.genesisHash = opts.genesisHash ?? "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
     this.latest = this.mintBlockhash();
   }
 
@@ -95,6 +102,15 @@ export class MockCluster {
   /** Force the next tx with this signature to land after `slots` (or never if <0). */
   scheduleLanding(signature: string, slots: number): void {
     this.landingOverrides.set(signature, slots);
+  }
+
+  /**
+   * Force the next tx with this signature to LAND but carry an on-chain
+   * execution error (`err != null` in its signature status). Models a tx that
+   * was included in a block but reverted — distinct from a silent drop/expiry.
+   */
+  scheduleFailure(signature: string, err: unknown = { InstructionError: [0, { Custom: 0 }] }): void {
+    this.failureOverrides.set(signature, err);
   }
 
   setPrioritizationFees(fees: bigint[]): void {
@@ -133,6 +149,10 @@ export class MockCluster {
     return this.blockHeight;
   }
 
+  rpcGetGenesisHash(): string {
+    return this.genesisHash;
+  }
+
   rpcGetLatestBlockhash(): {
     context: { slot: bigint };
     value: { blockhash: string; lastValidBlockHeight: bigint };
@@ -166,7 +186,7 @@ export class MockCluster {
         dropped,
         landedSlot: null,
         status: "pending",
-        err: null,
+        err: this.failureOverrides.get(signature) ?? null,
       });
     }
     return signature;

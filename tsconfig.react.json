@@ -6,8 +6,10 @@
     "sourceMap": false,
     "declaration": true,
     "declarationMap": false,
-    "noEmit": false
+    "noEmit": false,
+    "jsx": "react-jsx",
+    "types": ["node", "react"]
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules", "test", "demo", "examples", "src/react", "**/*.test.ts"]
+  "include": ["src/react/**/*.ts", "src/react/**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
 }

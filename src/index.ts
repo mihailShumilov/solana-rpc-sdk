@@ -8,6 +8,8 @@
 
 // Errors
 export * from "./errors.js";
+export { ErrorTranslator, TranslatedError, ERROR_PATTERNS } from "./error-translator.js";
+export type { ErrorCode, ErrorCategory, TranslateContext } from "./error-translator.js";
 
 // RPC layer
 export { ResilientRpcPool } from "./rpc/pool.js";
@@ -16,12 +18,22 @@ export { HealthMonitor } from "./rpc/health.js";
 export type { EndpointHealth, HealthMonitorConfig } from "./rpc/health.js";
 export { CreditRateLimiter, DEFAULT_METHOD_WEIGHTS } from "./rpc/rate-limit.js";
 export type { RateLimiterConfig } from "./rpc/rate-limit.js";
+export { ClusterDetector, CLUSTER_GENESIS_HASHES } from "./rpc/cluster.js";
+export type { Cluster, ClusterInfo, ClusterGuardConfig, ClusterGuardMode } from "./rpc/cluster.js";
 
 // Transactions
 export { TransactionSender } from "./tx/sender.js";
 export type { SendConfig, SendResult, SenderDeps } from "./tx/sender.js";
 export { ConfirmationTracker } from "./tx/confirmation.js";
-export type { TrackConfig, TrackResult, TerminalOutcome } from "./tx/confirmation.js";
+export type {
+  TrackConfig,
+  TrackResult,
+  TerminalOutcome,
+  ConfirmationDeps,
+  SignatureSubscriptionsApi,
+  ConfirmationEndpoint,
+  MultiEndpointConfig,
+} from "./tx/confirmation.js";
 
 // Fees
 export { FeeEstimator } from "./fees/estimator.js";
@@ -39,9 +51,21 @@ export type { TipFloor, TipPercentile, TipEstimatorConfig } from "./jito/tips.js
 export { InMemoryMetrics, OtelMetrics } from "./observability/metrics.js";
 export type { Metrics, OtelMetricsConfig } from "./observability/metrics.js";
 
+// Lifecycle events (typed, browser-safe stream for dApp UIs)
+export { TypedEventEmitter, LifecycleEmitter } from "./events.js";
+export type { LifecycleEventMap, TransactionEvent, EventListener } from "./events.js";
+
 // Wallet
 export { ResilientWalletAdapter } from "./wallet/adapter.js";
 export type { WalletSigner, ResilientWalletConfig } from "./wallet/adapter.js";
+export { WalletAdapterBridge } from "./wallet/wallet-adapter-bridge.js";
+export type {
+  WalletAdapterSigner,
+  WalletAdapterBridgeConfig,
+  BridgeSendOptions,
+  EncodedTransaction,
+  TransactionEncoder,
+} from "./wallet/wallet-adapter-bridge.js";
 
 // Diagnostics
 export { Diagnostics } from "./cli/diagnose.js";

@@ -19,5 +19,6 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["dist", "node_modules"]
+  "comment": "src/react is the optional React subpath; it is typechecked via tsconfig.react.json so the core stays framework-agnostic.",
+  "exclude": ["dist", "node_modules", "src/react"]
 }

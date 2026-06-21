@@ -23,6 +23,7 @@ import type { Rpc, SolanaRpcApi } from "@solana/kit";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { SdkError } from "../errors.js";
+import { ErrorTranslator } from "../error-translator.js";
 import { Diagnostics } from "./diagnose.js";
 import type { ProbeReport, TxDiagnosis } from "./diagnose.js";
 
@@ -251,12 +252,20 @@ export async function run(argv: string[], deps: CliDeps = {}): Promise<number> {
     return report.healthyCount > 0 ? 0 : 1;
   }
 
-  const result = await diag.explainTransaction(createRpc(parsed.rpcUrl), {
-    signature: parsed.signature,
-    lastValidBlockHeight: parsed.lastValidBlockHeight,
-  });
-  log(formatDiagnosis(parsed.signature, result));
-  return result.status === "expired" ? 1 : 0;
+  try {
+    const result = await diag.explainTransaction(createRpc(parsed.rpcUrl), {
+      signature: parsed.signature,
+      lastValidBlockHeight: parsed.lastValidBlockHeight,
+    });
+    log(formatDiagnosis(parsed.signature, result));
+    return result.status === "expired" ? 1 : 0;
+  } catch (err) {
+    // Reuse the SDK's ErrorTranslator dictionary so the CLI's explanation of a
+    // raw RPC failure matches the messages the SDK surfaces (no duplicated copy).
+    const translated = ErrorTranslator.translate(err);
+    log(`Signature: ${parsed.signature}\nError: ${translated.userMessage}\nSuggestion: ${translated.suggestion}`);
+    return 1;
+  }
 }
 
 /* v8 ignore start -- process bootstrap; only runs when invoked as the binary */

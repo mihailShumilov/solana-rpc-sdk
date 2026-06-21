@@ -29,6 +29,8 @@ export class MockEndpoint {
   private readonly rng: Rng;
   /** Counters tests/observability can assert against. */
   readonly stats = { requests: 0, errors: 0, rateLimited: 0, dropped: 0, sends: 0 };
+  /** Per-method invocation counts (e.g. how many getSignatureStatuses polls ran). */
+  readonly rpcCalls: Record<string, number> = {};
   /** The config object (params[1]) of the most recent sendTransaction call. */
   lastSendParams: Record<string, unknown> | undefined;
 
@@ -104,11 +106,14 @@ export class MockEndpoint {
 
   private dispatch(payload: JsonRpcPayload): unknown {
     const params = payload.params ?? [];
+    this.rpcCalls[payload.method] = (this.rpcCalls[payload.method] ?? 0) + 1;
     switch (payload.method) {
       case "getSlot":
         return this.adjustForLag("getSlot", this.cluster.rpcGetSlot());
       case "getBlockHeight":
         return this.adjustForLag("getBlockHeight", this.cluster.rpcGetBlockHeight());
+      case "getGenesisHash":
+        return this.cluster.rpcGetGenesisHash();
       case "getLatestBlockhash":
         return this.adjustForLag("getLatestBlockhash", this.cluster.rpcGetLatestBlockhash());
       case "sendTransaction": {
